@@ -1,0 +1,1982 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Marketplace Ledger — UI Prototype</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          brand: { 50:'#eef4ff',100:'#dbe6ff',500:'#3b6bff',600:'#2f56e6',700:'#2545bd' },
+        },
+        boxShadow: { soft: '0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.10)' }
+      }
+    }
+  }
+</script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html,body,#root { height: 100%; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background:#f6f7fb; color:#0f172a; }
+  /* Subtle scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .chip { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:9999px; font-size:11px; font-weight:600; }
+  .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; background:#eef2ff; color:#334155; padding:1px 6px; border-radius:4px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect, useRef, createContext, useContext, Fragment } = React;
+
+/* ============================================================
+   MOCK DATA
+   ============================================================ */
+
+const PARTIES = {
+  fo: [
+    { id:'FO-1001', name:'Sharma Logistics', pan:'AAACS1234C', gst:'29AAACS1234C1Z2', city:'Bengaluru', tdsRate:2, hasExemption:false, agreementVersion:'v3', accountNo:'XXXX4521', ifsc:'HDFC0001234' },
+    { id:'FO-1002', name:'Rao Transport',    pan:'AABCR9876D', gst:'27AABCR9876D1ZQ', city:'Mumbai',    tdsRate:20, hasExemption:false, agreementVersion:'v2', accountNo:'XXXX9821', ifsc:'ICIC0004412' },
+    { id:'FO-1003', name:'N K Logistics',    pan:'ANKPL4567K', gst:null,              city:'Patna',     tdsRate:2, hasExemption:false, agreementVersion:'v3', accountNo:'XXXX1184', ifsc:'SBIN0011245' },
+    { id:'FO-1004', name:'Patel Carriers',   pan:'AAEPP1122E', gst:'24AAEPP1122E1ZJ', city:'Ahmedabad', tdsRate:0, hasExemption:true,  agreementVersion:'v3', accountNo:'XXXX7711', ifsc:'YESB0000123' },
+  ],
+  lsp: [
+    { id:'LSP-2001', name:'ABC Manufacturing',     pan:'AABCA1111Z', gst:'29AABCA1111Z1ZB', creditDays:30, branches:[{id:'B1',code:'BLR-HO',gst:'29AABCA1111Z1ZB'},{id:'B2',code:'CHN',gst:'33AABCA1111Z1Z9'}] },
+    { id:'LSP-2002', name:'XYZ Traders',           pan:'AABCX2222Y', gst:'27AABCX2222Y1ZP', creditDays:45, branches:[{id:'B1',code:'BOM-HO',gst:'27AABCX2222Y1ZP'}] },
+    { id:'LSP-2003', name:'Reliable Supply Chain', pan:'AABCR3333X', gst:'07AABCR3333X1ZT', creditDays:60, branches:[{id:'B1',code:'DEL-HO',gst:'07AABCR3333X1ZT'},{id:'B2',code:'GGN',gst:'06AABCR3333X1ZS'}] },
+  ]
+};
+
+const COMPONENT_MASTER = [
+  { id:'C1',  name:'Loading',                kind:'Charge',     side:'Both',       entry:'Both',   maxAbs:5000,   maxPct:5,  approvalRule:'>1000', isAuto:false },
+  { id:'C2',  name:'Unloading',              kind:'Charge',     side:'Both',       entry:'Both',   maxAbs:5000,   maxPct:5,  approvalRule:'>1000', isAuto:false },
+  { id:'C3',  name:'Detention (Loading)',    kind:'Charge',     side:'Both',       entry:'Both',   maxAbs:20000,  maxPct:20, approvalRule:'>3000', isAuto:false },
+  { id:'C4',  name:'Detention (Unloading)',  kind:'Charge',     side:'Both',       entry:'Both',   maxAbs:20000,  maxPct:20, approvalRule:'>3000', isAuto:false },
+  { id:'C5',  name:'Weight Surcharge',       kind:'Charge',     side:'Both',       entry:'Manual', maxAbs:25000,  maxPct:25, approvalRule:'>5000', isAuto:false },
+  { id:'C6',  name:'Toll / Fastag',          kind:'Charge',     side:'Receivable', entry:'Manual', maxAbs:10000,  maxPct:10, approvalRule:'never',  isAuto:false },
+  { id:'C7',  name:'Cancellation Charge',    kind:'Charge',     side:'Both',       entry:'Manual', maxAbs:10000,  maxPct:10, approvalRule:'always', isAuto:false },
+  { id:'D1',  name:'Damages',                kind:'Deduction',  side:'Payable',    entry:'Manual', maxAbs:50000,  maxPct:50, approvalRule:'always', isAuto:false },
+  { id:'D2',  name:'Shortage',               kind:'Deduction',  side:'Payable',    entry:'Manual', maxAbs:50000,  maxPct:50, approvalRule:'always', isAuto:false },
+  { id:'D3',  name:'POD Late Penalty',       kind:'Deduction',  side:'Payable',    entry:'Auto',   maxAbs:99999,  maxPct:100,approvalRule:'never',  isAuto:true },
+  { id:'D4',  name:'TDS',                    kind:'Deduction',  side:'Payable',    entry:'Auto',   maxAbs:99999,  maxPct:20, approvalRule:'never',  isAuto:true },
+  { id:'D5',  name:'Late Reporting Penalty', kind:'Deduction',  side:'Payable',    entry:'Manual', maxAbs:5000,   maxPct:5,  approvalRule:'>500',   isAuto:false },
+  { id:'D6',  name:'Damage Claim',           kind:'Deduction',  side:'Receivable', entry:'Manual', maxAbs:50000,  maxPct:50, approvalRule:'always', isAuto:false },
+  { id:'E1',  name:'Platform Commission',    kind:'Earning',    side:'FT',         entry:'Auto',   maxAbs:99999,  maxPct:100,approvalRule:'never',  isAuto:true },
+];
+
+const RULES = {
+  commission: [
+    { upto: 30000,  fee: 500 },
+    { upto: 50000,  fee: 500 },
+    { upto: 100000, fee: 1000 },
+    { upto: 999999, fee: 1500 },
+  ],
+  tds: { exemption:0, panMissing:20, panValid:2 },
+  podPenalty: { gracedays: 15, perDay: 100, fullForfeitAfterDays: 25 },
+  gating: [
+    { id:'g1', name:'Advance blocked if trip not LOADED/IN-TRANSIT', enabled:true },
+    { id:'g2', name:'Balance blocked if POD not approved', enabled:true },
+    { id:'g3', name:'Balance blocked if advance unpaid', enabled:true },
+    { id:'g4', name:'Block payment if mandatory docs missing', enabled:true },
+  ]
+};
+
+const BASE_TRIPS = [
+  {
+    id:'T-100231', lr:'LR-77231', route:'DEL → BLR', vehicle:'KA-01-AB-1234', status:'IN-TRANSIT',
+    foId:'FO-1001', lspId:'LSP-2001', lspBranch:'BLR-HO',
+    startedAt:'2026-05-09 10:30', unloadedAt:null,
+    podStatus:'Audit Pending', podAvailability:'POD Available', podAudit:'Audit Pending', podDisputeReasons:[], podRemark:'',
+    docs:{ lr:{file:'LR-77231.pdf',uploadedBy:'priya@ft',at:'2026-05-09 10:30',approved:true}, invoice:null, rc:{file:'RC-KA01AB1234.pdf',uploadedBy:'rahul@ft',at:'2026-05-09 10:35',approved:true} },
+    fo:{ freight:100000, charges:[{cid:'C1',name:'Loading',amt:1000,status:'Approved',addedBy:'priya@ft',at:'2026-05-09 10:31',edits:[]},{cid:'C3',name:'Detention (Loading)',amt:3000,status:'Approved',addedBy:'rahul@ft',at:'2026-05-09 11:02',edits:[{from:2500,to:3000,by:'rahul@ft',at:'2026-05-09 12:10',reason:'Confirmed by LSP'}]}], deductions:[{cid:'D5',name:'Late Reporting Penalty',amt:500,status:'Approved',addedBy:'finance@ft',at:'2026-05-09 13:00',edits:[]}], payments:[{stage:'Advance',amt:81000,utr:'HDFC9981',at:'2026-05-09 14:21',mode:'Razorpay',by:'finance@ft'}] },
+    lsp:{ freight:120000, charges:[{cid:'C1',name:'Loading',amt:2000,status:'Approved',addedBy:'priya@ft',at:'2026-05-09 10:32',edits:[]},{cid:'C6',name:'Toll / Fastag',amt:1500,status:'Approved',addedBy:'priya@ft',at:'2026-05-09 11:00',edits:[]},{cid:'C4',name:'Detention (Unloading)',amt:4000,status:'Approved',addedBy:'rahul@ft',at:'2026-05-09 11:05',edits:[]}], deductions:[{cid:'D6',name:'Damage Claim',amt:1000,status:'Pending',addedBy:'ops@ft',at:'2026-05-09 16:00',edits:[]}], receipts:[{stage:'Advance',amt:99500,utr:'NEFT83321',at:'2026-05-09 15:02',mode:'NEFT',by:'finance@ft'}] },
+  },
+  {
+    id:'T-100232', lr:'LR-77232', route:'BOM → HYD', vehicle:'MH-04-XX-5566', status:'CANCELLED',
+    foId:'FO-1002', lspId:'LSP-2002', lspBranch:'BOM-HO',
+    startedAt:'2026-05-12 08:00', unloadedAt:null,
+    podStatus:'NA', podAvailability:'POD Lost', podAudit:'Audit Pending', podDisputeReasons:[], podRemark:'Trip cancelled before unload',
+    docs:{ lr:null, invoice:null, rc:null },
+    fo:{ freight:80000, charges:[], deductions:[], payments:[{stage:'Advance',amt:64000,utr:'HDFC9988',at:'2026-05-12 11:00',mode:'Razorpay',by:'finance@ft'}] },
+    lsp:{ freight:100000, charges:[], deductions:[], receipts:[{stage:'Advance',amt:80000,utr:'UTR-22118',at:'2026-05-12 12:11',mode:'NEFT',by:'finance@ft'}] },
+  },
+  {
+    id:'T-100233', lr:'LR-77233', route:'CHN → CBE', vehicle:'TN-09-CD-7788', status:'SETTLED',
+    foId:'FO-1003', lspId:'LSP-2001', lspBranch:'CHN',
+    startedAt:'2026-04-22 06:10', unloadedAt:'2026-04-24 18:35',
+    podStatus:'Approved', podAvailability:'POD Available', podAudit:'Clean', podDisputeReasons:[], podRemark:'',
+    docs:{ lr:{file:'LR-77233.pdf',uploadedBy:'fo@sharma',at:'2026-04-22 06:00',approved:true}, invoice:{file:'INV-883.pdf',uploadedBy:'finance@ft',at:'2026-04-22 07:00',approved:true}, rc:{file:'RC-TN09CD7788.pdf',uploadedBy:'fo@sharma',at:'2026-04-22 06:00',approved:true} },
+    fo:{ freight:55000, charges:[{cid:'C1',name:'Loading',amt:800,status:'Approved',addedBy:'priya@ft',at:'2026-04-22 06:11',edits:[]}], deductions:[{cid:'D4',name:'TDS',amt:1100,status:'Approved',addedBy:'system',at:'2026-04-26 11:00',edits:[]}], payments:[{stage:'Advance',amt:44000,utr:'PX-101',at:'2026-04-22 09:00',mode:'Razorpay',by:'finance@ft'},{stage:'Balance',amt:10700,utr:'PX-220',at:'2026-04-26 11:10',mode:'Razorpay',by:'finance@ft'}] },
+    lsp:{ freight:70000, charges:[{cid:'C1',name:'Loading',amt:1200,status:'Approved',addedBy:'priya@ft',at:'2026-04-22 06:12',edits:[]}], deductions:[], receipts:[{stage:'Advance',amt:56800,utr:'BR-9001',at:'2026-04-22 10:11',mode:'NEFT',by:'finance@ft'},{stage:'Balance',amt:14400,utr:'BR-9111',at:'2026-04-27 10:30',mode:'NEFT',by:'finance@ft'}] },
+  },
+  {
+    id:'T-100234', lr:'LR-77234', route:'AMD → JAI', vehicle:'GJ-12-EE-1010', status:'UNLOADED',
+    foId:'FO-1004', lspId:'LSP-2003', lspBranch:'DEL-HO',
+    startedAt:'2026-05-15 09:20', unloadedAt:'2026-05-17 16:40',
+    podStatus:'Submitted', podAvailability:'POD Submitted Onsite', podAudit:'Disputed', podDisputeReasons:['Shortages','Okay Seal is Unbroken'], podRemark:'Brand mismatch',
+    docs:{ lr:{file:'LR-77234.pdf',uploadedBy:'fo@patel',at:'2026-05-15 09:20',approved:false}, invoice:null, rc:{file:'RC-GJ12EE1010.pdf',uploadedBy:'fo@patel',at:'2026-05-15 09:20',approved:true} },
+    fo:{ freight:90000, charges:[{cid:'C1',name:'Loading',amt:1500,status:'Approved',addedBy:'priya@ft',at:'2026-05-15 09:25',edits:[]},{cid:'C2',name:'Unloading',amt:1200,status:'Pending',addedBy:'fo@patel',at:'2026-05-17 16:50',edits:[]}], deductions:[], payments:[{stage:'Advance',amt:73200,utr:'RZX-301',at:'2026-05-15 13:00',mode:'Razorpay',by:'finance@ft'}] },
+    lsp:{ freight:115000, charges:[{cid:'C2',name:'Unloading',amt:1500,status:'Approved',addedBy:'ops@ft',at:'2026-05-17 17:00',edits:[]}], deductions:[], receipts:[{stage:'Advance',amt:93200,utr:'BR-9555',at:'2026-05-15 14:42',mode:'NEFT',by:'finance@ft'}] },
+  },
+];
+
+function generateMoreTrips(){
+  const routes = ['DEL → HYD','MUM → PUN','BLR → COK','AHM → JAI','KOL → PAT','CHN → MAD','LKO → DEL','SUR → AHM','NAG → BPL','VIZ → HYD','TVM → COK','IND → BHO','JAI → DEL','GHY → KOL','RNC → KOL','CCU → BBI','MAA → CJB','BLR → MAA','BOM → GOI','PNQ → BOM','DEL → CHD','DEL → JAI','MUM → SUR','HYD → BLR','CHN → BLR','KOL → BBI','PAT → DEL','AGR → DEL','LKO → KAN','BHO → IND','CBE → BLR','MYS → BLR','VAD → AHM','RJK → AHM','RAN → KOL'];
+  const statuses = ['LOADED','DISPATCHED','IN-TRANSIT','UNLOADED','SETTLED','CANCELLED'];
+  const employees = ['priya@ft','rahul@ft','ops@ft','finance@ft','sneha@ft','aman@ft'];
+  const out = [];
+  for (let i=0;i<35;i++){
+    const id = 'T-1003' + String(35+i).padStart(2,'0');
+    const fo = PARTIES.fo[i % PARTIES.fo.length];
+    const lsp = PARTIES.lsp[i % PARTIES.lsp.length];
+    const branch = lsp.branches[i % lsp.branches.length].code;
+    const status = statuses[i % statuses.length];
+    const podAvail = status==='CANCELLED'?'POD Lost':(['UNLOADED','SETTLED'].includes(status)?'POD Available':'POD Submitted Onsite');
+    const podAudit = status==='SETTLED'?'Clean':(status==='UNLOADED' && i%4===0?'Disputed':'Audit Pending');
+    const podStatus = status==='CANCELLED'?'NA':(status==='SETTLED'?'Approved':(['UNLOADED'].includes(status)?'Submitted':'Audit Pending'));
+    const baseFO = 40000 + ((i*3700) % 90000);
+    const baseLSP = baseFO + 15000 + ((i*1100) % 12000);
+    const day = String((i % 27) + 1).padStart(2,'0');
+    const month = i % 2 === 0 ? '04' : '05';
+    const emp = employees[i % employees.length];
+    const fc = [{cid:'C1',name:'Loading',amt:1000+(i*100)%1500,status:'Approved',addedBy:emp,at:`2026-${month}-${day} 10:00`,edits:[]}];
+    const lc = [{cid:'C1',name:'Loading',amt:1800+(i*120)%1500,status:'Approved',addedBy:emp,at:`2026-${month}-${day} 10:01`,edits:[]}];
+    if (['IN-TRANSIT','UNLOADED','SETTLED'].includes(status)) {
+      lc.push({cid:'C6',name:'Toll / Fastag',amt:1500+(i*50)%1000,status:'Approved',addedBy:emp,at:`2026-${month}-${day} 12:00`,edits:[]});
+    }
+    if (['UNLOADED','SETTLED'].includes(status)) {
+      fc.push({cid:'C2',name:'Unloading',amt:900+(i*70)%1200,status:i%5===0?'Pending':'Approved',addedBy:emp,at:`2026-${month}-${day} 18:00`,edits:[]});
+    }
+    const advFO = status==='LOADED'?0:Math.round(baseFO*0.8);
+    const advLSP = status==='LOADED'?0:Math.round(baseLSP*0.8);
+    const fc_amt = fc.filter(x=>x.status==='Approved').reduce((s,x)=>s+x.amt,0);
+    const lc_amt = lc.filter(x=>x.status==='Approved').reduce((s,x)=>s+x.amt,0);
+    const balFO = status==='SETTLED'? (baseFO + fc_amt - advFO) : 0;
+    const balLSP = status==='SETTLED'? (baseLSP + lc_amt - advLSP) : 0;
+    const payments = [], receipts = [];
+    if (advFO) payments.push({stage:'Advance',amt:advFO,utr:'RZ'+String(10000+i),at:`2026-${month}-${day} 14:00`,mode:'Razorpay',by:'finance@ft'});
+    if (balFO) payments.push({stage:'Balance',amt:balFO,utr:'RZ'+String(20000+i),at:`2026-${month}-${String((i%25)+3).padStart(2,'0')} 14:00`,mode:'Razorpay',by:'finance@ft'});
+    if (advLSP) receipts.push({stage:'Advance',amt:advLSP,utr:'BR'+String(10000+i),at:`2026-${month}-${day} 15:00`,mode:'NEFT',by:'finance@ft'});
+    if (balLSP) receipts.push({stage:'Balance',amt:balLSP,utr:'BR'+String(20000+i),at:`2026-${month}-${String((i%25)+3).padStart(2,'0')} 15:00`,mode:'NEFT',by:'finance@ft'});
+    out.push({
+      id, lr:'LR-7'+String(7235+i), route: routes[i%routes.length],
+      vehicle: ['KA','MH','TN','GJ','DL','WB','RJ','UP'][i%8]+'-'+(10+i%80)+'-'+['AB','CD','EE','XX','YY','PQ'][i%6]+'-'+String(1000+i),
+      status, foId: fo.id, lspId: lsp.id, lspBranch: branch,
+      startedAt: `2026-${month}-${day} 09:00`,
+      unloadedAt: ['UNLOADED','SETTLED'].includes(status)?`2026-${month}-${String(((i+3)%27)+1).padStart(2,'0')} 18:00`:null,
+      podStatus, podAvailability: podAvail, podAudit, podDisputeReasons:[], podRemark:'',
+      docs:{ lr:status!=='LOADED'?{file:`LR-7${7235+i}.pdf`,uploadedBy:emp,at:`2026-${month}-${day} 09:00`,approved:true}:null, invoice:null, rc:null },
+      fo:{freight:baseFO,charges:fc,deductions:[],payments},
+      lsp:{freight:baseLSP,charges:lc,deductions:[],receipts}
+    });
+  }
+  return out;
+}
+
+const TRIPS_SEED = [...BASE_TRIPS, ...generateMoreTrips()];
+
+const WALLETS_SEED = {
+  // party -> { ftOwes: amount (FT must pay party), partyOwes: amount (party must pay FT), events:[...] }
+  'FO-1001': { ftOwes: 0,    partyOwes: 0,    events: [] },
+  'FO-1002': { ftOwes: 0,    partyOwes: 64000,events: [{ at:'2026-05-12 18:10', type:'Recovery', amt:64000, ref:'T-100232 cancelled', note:'Advance paid; trip cancelled, becomes recoverable' }] },
+  'FO-1003': { ftOwes: 0,    partyOwes: 0,    events: [] },
+  'FO-1004': { ftOwes: 2000, partyOwes: 0,    events: [{ at:'2026-04-03 11:30', type:'Refund/Credit', amt:2000, ref:'T-100199 overpaid', note:'Overpaid balance returned as credit' }] },
+  'LSP-2001':{ ftOwes: 5000, partyOwes: 0,    events: [{ at:'2026-04-30 15:00', type:'Excess receipt', amt:5000, ref:'IRN-44 collection', note:'LSP overpaid by ₹5,000' }] },
+  'LSP-2002':{ ftOwes: 80000,partyOwes: 0,    events: [{ at:'2026-05-12 18:10', type:'Cancelled receipt', amt:80000, ref:'T-100232 cancelled', note:'LSP advance becomes credit' }] },
+  'LSP-2003':{ ftOwes: 0,    partyOwes: 6000, events: [{ at:'2026-05-05 12:00', type:'Shortfall',  amt:6000,  ref:'IRN-55 underpaid', note:'Short collection vs invoice' }] },
+};
+
+const AUDIT_SEED = [
+  { id:1, at:'2026-05-09 10:31', actor:'priya@ft', trip:'T-100231', party:'FO',  type:'Charge added',     action:'Charge added',     details:'Loading ₹1,000 (Auto-approved below threshold)' },
+  { id:2, at:'2026-05-09 11:02', actor:'rahul@ft', trip:'T-100231', party:'FO',  type:'Charge added',     action:'Charge added',     details:'Detention (Loading) ₹3,000 (Auto-approved)' },
+  { id:3, at:'2026-05-09 12:10', actor:'rahul@ft', trip:'T-100231', party:'FO',  type:'Edited',           action:'Charge edited',    details:'Detention (Loading) ₹2,500 → ₹3,000 (Confirmed by LSP)' },
+  { id:4, at:'2026-05-09 14:21', actor:'finance@ft',trip:'T-100231',party:'FO',  type:'Payment paid',     action:'Advance paid',     details:'₹81,000 via Razorpay UTR HDFC9981' },
+  { id:5, at:'2026-05-09 15:02', actor:'finance@ft',trip:'T-100231',party:'LSP', type:'Payment paid',     action:'Advance received', details:'₹99,500 via NEFT UTR NEFT83321' },
+  { id:6, at:'2026-05-12 18:10', actor:'system',   trip:'T-100232', party:'',    type:'Status',           action:'Trip cancelled',   details:'Freight → 0; advance ₹64,000 moved to FO recovery wallet' },
+];
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+
+const INR = n => '₹' + Number(n||0).toLocaleString('en-IN');
+const cls = (...a) => a.filter(Boolean).join(' ');
+
+function sumCharges(arr){ return (arr||[]).filter(x=>x.status==='Approved').reduce((s,x)=>s+x.amt,0); }
+function sumPending(arr){ return (arr||[]).filter(x=>x.status==='Pending').reduce((s,x)=>s+x.amt,0); }
+
+function commissionFor(freight){
+  for (const slab of RULES.commission) if (freight <= slab.upto) return slab.fee;
+  return RULES.commission[RULES.commission.length-1].fee;
+}
+function tdsRateFor(fo){
+  if (fo.hasExemption) return RULES.tds.exemption;
+  if (!fo.pan) return RULES.tds.panMissing;
+  return RULES.tds.panValid;
+}
+
+function tripTotals(trip){
+  const foCharges = sumCharges(trip.fo.charges);
+  const foDed     = sumCharges(trip.fo.deductions);
+  const foNet     = trip.fo.freight + foCharges - foDed;
+  const foPaid    = (trip.fo.payments||[]).reduce((s,p)=>s+p.amt,0);
+  const foDue     = foNet - foPaid;
+
+  const lspCharges= sumCharges(trip.lsp.charges);
+  const lspDed    = sumCharges(trip.lsp.deductions);
+  const lspNet    = trip.lsp.freight + lspCharges - lspDed;
+  const lspRecvd  = (trip.lsp.receipts||[]).reduce((s,p)=>s+p.amt,0);
+  const lspDue    = lspNet - lspRecvd;
+
+  const ftCommission = commissionFor(trip.lsp.freight);
+  const ftExpMargin  = lspNet - foNet;
+  const ftRealMargin = lspRecvd - foPaid;
+
+  return { foCharges, foDed, foNet, foPaid, foDue, lspCharges, lspDed, lspNet, lspRecvd, lspDue, ftCommission, ftExpMargin, ftRealMargin };
+}
+
+/* ============================================================
+   GLOBAL APP CONTEXT
+   ============================================================ */
+
+const ROLES = ['Admin','Finance','Ops','POD Audit','Viewer'];
+// Section visibility configuration per role
+const DEFAULT_SECTIONS = {
+  Admin:    { fo:true, lsp:true, ft:true, pod:true, docs:true, audit:true, tracking:true, comments:true, wallet:true },
+  Finance:  { fo:true, lsp:true, ft:true, pod:true, docs:true, audit:true, tracking:false,comments:true, wallet:true },
+  Ops:      { fo:true, lsp:true, ft:false,pod:true, docs:true, audit:true, tracking:true, comments:true, wallet:false },
+  'POD Audit':{fo:false,lsp:false,ft:false,pod:true, docs:true, audit:true, tracking:true, comments:true, wallet:false },
+  Viewer:   { fo:true, lsp:true, ft:false,pod:true, docs:true, audit:true, tracking:true, comments:false,wallet:true },
+};
+
+const AppCtx = createContext(null);
+
+function AppProvider({ children }){
+  const [trips, setTrips] = useState(TRIPS_SEED);
+  const [wallets, setWallets] = useState(WALLETS_SEED);
+  const [audit, setAudit] = useState(AUDIT_SEED);
+  const [components, setComponents] = useState(COMPONENT_MASTER);
+  const [rules, setRules] = useState(RULES);
+  const [role, setRole] = useState('Admin');
+  const [sectionsByRole, setSectionsByRole] = useState(DEFAULT_SECTIONS);
+  const [route, setRoute] = useState({ name:'payments' });
+  const [toast, setToast] = useState(null);
+  const [asOf, setAsOf] = useState(null); // null means now
+
+  function pushAudit(entry){
+    setAudit(a => [{ id: a.length+1, at:new Date().toISOString().slice(0,16).replace('T',' '), ...entry }, ...a]);
+  }
+  function showToast(msg){ setToast(msg); setTimeout(()=>setToast(null), 2400); }
+
+  return <AppCtx.Provider value={{
+    trips, setTrips, wallets, setWallets, audit, pushAudit,
+    components, setComponents, rules, setRules,
+    role, setRole, sectionsByRole, setSectionsByRole,
+    route, setRoute, asOf, setAsOf, toast, showToast,
+  }}>{children}</AppCtx.Provider>;
+}
+const useApp = () => useContext(AppCtx);
+
+/* ============================================================
+   PRIMITIVES
+   ============================================================ */
+
+const StatusChip = ({ status }) => {
+  const map = {
+    'IN-TRANSIT': 'bg-blue-100 text-blue-700',
+    'DISPATCHED': 'bg-indigo-100 text-indigo-700',
+    'UNLOADED':   'bg-amber-100 text-amber-700',
+    'SETTLED':    'bg-emerald-100 text-emerald-700',
+    'CANCELLED':  'bg-rose-100 text-rose-700',
+    'LOADED':     'bg-violet-100 text-violet-700',
+    'Clean':      'bg-emerald-100 text-emerald-700',
+    'Disputed':   'bg-rose-100 text-rose-700',
+    'POD Available':'bg-emerald-100 text-emerald-700',
+    'POD Submitted Onsite':'bg-sky-100 text-sky-700',
+    'POD Lost':   'bg-rose-100 text-rose-700',
+    'Audit Pending':'bg-amber-100 text-amber-700',
+    'Auto':       'bg-slate-100 text-slate-700',
+    'Manual':     'bg-violet-100 text-violet-700',
+    'Approved':   'bg-emerald-100 text-emerald-700',
+    'Pending':    'bg-amber-100 text-amber-700',
+    'Rejected':   'bg-rose-100 text-rose-700',
+    'Submitted':  'bg-sky-100 text-sky-700',
+    'NA':         'bg-slate-100 text-slate-600',
+  };
+  return <span className={cls('chip', map[status]||'bg-slate-100 text-slate-700')}>{status}</span>;
+};
+
+const Card = ({ title, right, children, padded=true, className }) => (
+  <div className={cls('bg-white rounded-2xl shadow-soft border border-slate-200', className)}>
+    {(title||right) && (
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <div className="font-semibold text-slate-800 text-[15px]">{title}</div>
+        <div>{right}</div>
+      </div>
+    )}
+    <div className={padded?'p-4':''}>{children}</div>
+  </div>
+);
+
+const Button = ({ as='button', kind='primary', size='md', className, children, ...rest }) => {
+  const base = 'inline-flex items-center justify-center gap-2 font-medium rounded-lg transition border';
+  const sizes = { sm:'text-xs px-2.5 py-1.5', md:'text-sm px-3.5 py-2', lg:'text-sm px-4 py-2.5' };
+  const kinds = {
+    primary: 'bg-brand-600 hover:bg-brand-700 text-white border-brand-600',
+    soft:    'bg-brand-50 hover:bg-brand-100 text-brand-700 border-brand-100',
+    ghost:   'bg-transparent hover:bg-slate-100 text-slate-700 border-transparent',
+    outline: 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300',
+    danger:  'bg-rose-600 hover:bg-rose-700 text-white border-rose-600',
+    success: 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600',
+  };
+  const Comp = as;
+  return <Comp className={cls(base, sizes[size], kinds[kind], className)} {...rest}>{children}</Comp>;
+};
+
+const Input = ({ label, className, ...rest }) => (
+  <label className="block">
+    {label && <div className="text-xs text-slate-500 mb-1 font-medium">{label}</div>}
+    <input className={cls('w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 bg-white', className)} {...rest}/>
+  </label>
+);
+
+const Select = ({ label, children, className, ...rest }) => (
+  <label className="block">
+    {label && <div className="text-xs text-slate-500 mb-1 font-medium">{label}</div>}
+    <select className={cls('w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 bg-white', className)} {...rest}>{children}</select>
+  </label>
+);
+
+const Modal = ({ open, onClose, title, children, footer, wide=false }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40" onClick={onClose}>
+      <div className={cls('bg-white rounded-2xl shadow-xl border border-slate-200', wide?'w-[800px] max-w-[95vw]':'w-[520px] max-w-[95vw]')} onClick={e=>e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div className="font-semibold text-slate-800">{title}</div>
+          <button className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
+        </div>
+        <div className="px-5 py-4 max-h-[70vh] overflow-y-auto">{children}</div>
+        {footer && <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex items-center justify-end gap-2">{footer}</div>}
+      </div>
+    </div>
+  );
+};
+
+const Toggle = ({ checked, onChange, label }) => (
+  <label className="inline-flex items-center gap-2 cursor-pointer">
+    <span className={cls('w-9 h-5 rounded-full relative transition', checked?'bg-brand-600':'bg-slate-300')}
+      onClick={() => onChange(!checked)}>
+      <span className={cls('absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition', checked&&'translate-x-4')}/>
+    </span>
+    {label && <span className="text-sm text-slate-700">{label}</span>}
+  </label>
+);
+
+const Section = ({ id, title, defaultOpen=true, children, right }) => {
+  const { role, sectionsByRole } = useApp();
+  if (sectionsByRole[role] && sectionsByRole[role][id]===false) return null;
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="bg-white rounded-2xl shadow-soft border border-slate-200 mb-4">
+      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={()=>setOpen(o=>!o)}>
+        <div className="flex items-center gap-2">
+          <span className={cls('text-slate-400 text-xs transition', open&&'rotate-90')}>▶</span>
+          <span className="font-semibold text-slate-800 text-[15px]">{title}</span>
+        </div>
+        <div onClick={e=>e.stopPropagation()}>{right}</div>
+      </button>
+      {open && <div className="px-4 pb-4 border-t border-slate-100 pt-4">{children}</div>}
+    </div>
+  );
+};
+
+const Empty = ({ msg='No data' }) => <div className="text-center py-8 text-sm text-slate-400">{msg}</div>;
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+
+const NAV = [
+  { id:'payments',  label:'Payments / Trips', icon:'📦' },
+  { id:'fo',        label:'Fleet Owners',     icon:'🚚' },
+  { id:'lsp',       label:'LSPs',             icon:'🏢' },
+  { id:'ft',        label:'FT Ledger',        icon:'📒' },
+  { id:'wallet',    label:'Wallet & Recoveries', icon:'👛' },
+  { id:'documents', label:'Documents',        icon:'📄' },
+  { id:'reports',   label:'Reports',          icon:'📊' },
+  { id:'admin',     label:'Admin',            icon:'⚙️' },
+];
+
+function Sidebar(){
+  const { route, setRoute } = useApp();
+  return (
+    <aside className="w-60 shrink-0 border-r border-slate-200 bg-white p-3 flex flex-col">
+      <div className="flex items-center gap-2 px-2 py-3 mb-2">
+        <div className="w-8 h-8 rounded-lg bg-brand-600 text-white flex items-center justify-center font-bold">FT</div>
+        <div>
+          <div className="font-semibold text-slate-800 text-sm leading-tight">Marketplace</div>
+          <div className="text-[11px] text-slate-500">Ledger</div>
+        </div>
+      </div>
+      <nav className="flex-1 space-y-0.5">
+        {NAV.map(n => (
+          <button key={n.id}
+            onClick={()=>setRoute({ name:n.id })}
+            className={cls('w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm',
+              route.name===n.id ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-700 hover:bg-slate-50')}>
+            <span>{n.icon}</span><span>{n.label}</span>
+          </button>
+        ))}
+      </nav>
+      <div className="text-[11px] text-slate-400 px-3 pt-3 border-t border-slate-100">
+        Build • UI prototype • mock data
+      </div>
+    </aside>
+  );
+}
+
+function Topbar(){
+  const { role, setRole, asOf, setAsOf } = useApp();
+  return (
+    <div className="h-14 border-b border-slate-200 bg-white px-4 flex items-center justify-between sticky top-0 z-30">
+      <div className="flex items-center gap-3">
+        <div className="relative">
+          <input className="w-80 px-3 py-1.5 pl-9 text-sm rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500" placeholder="Search trip ID, LR, vehicle, party..." />
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-slate-500">As-of</span>
+          <input type="datetime-local" value={asOf||''} onChange={e=>setAsOf(e.target.value||null)} className="px-2 py-1 text-xs rounded-md border border-slate-300 bg-white" />
+          {asOf && <button onClick={()=>setAsOf(null)} className="text-brand-600 hover:underline">clear</button>}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-500">Role</span>
+          <select value={role} onChange={e=>setRole(e.target.value)} className="text-sm px-2 py-1 rounded-md border border-slate-300 bg-white">
+            {ROLES.map(r => <option key={r}>{r}</option>)}
+          </select>
+        </div>
+        <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-semibold text-sm">DS</div>
+      </div>
+    </div>
+  );
+}
+
+function Toast(){
+  const { toast } = useApp();
+  if (!toast) return null;
+  return <div className="fixed bottom-6 right-6 bg-slate-900 text-white text-sm px-4 py-2 rounded-xl shadow-lg z-50">{toast}</div>;
+}
+
+/* ============================================================
+   PAGE: TRIPS LIST
+   ============================================================ */
+
+function PaymentsPage(){
+  const { trips, setRoute } = useApp();
+  const [filters, setFilters] = useState({ status:'', fo:'', lsp:'', pod:'', q:'' });
+
+  const filtered = trips.filter(t => {
+    if (filters.status && t.status !== filters.status) return false;
+    if (filters.fo && t.foId !== filters.fo) return false;
+    if (filters.lsp && t.lspId !== filters.lsp) return false;
+    if (filters.pod && t.podStatus !== filters.pod) return false;
+    if (filters.q) {
+      const q = filters.q.toLowerCase();
+      if (![t.id,t.lr,t.route,t.vehicle].join(' ').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900">Payments & Trips</h1>
+          <p className="text-sm text-slate-500">All trips with payable, receivable and POD status</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button kind="outline">Export CSV</Button>
+          <Button kind="primary">+ Record Offline Receipt</Button>
+        </div>
+      </div>
+
+      <Card padded={false}>
+        <div className="grid grid-cols-12 gap-3 p-4 border-b border-slate-100 bg-slate-50/50">
+          <Input label="Search" className="col-span-3" placeholder="Trip ID / LR / Vehicle" value={filters.q} onChange={e=>setFilters({...filters,q:e.target.value})}/>
+          <Select label="Status" value={filters.status} onChange={e=>setFilters({...filters,status:e.target.value})}>
+            <option value="">All</option>
+            {['LOADED','DISPATCHED','IN-TRANSIT','UNLOADED','SETTLED','CANCELLED'].map(s=><option key={s}>{s}</option>)}
+          </Select>
+          <Select label="POD" value={filters.pod} onChange={e=>setFilters({...filters,pod:e.target.value})}>
+            <option value="">All</option>
+            {['Pending','Submitted','Approved','NA'].map(s=><option key={s}>{s}</option>)}
+          </Select>
+          <Select label="FO" value={filters.fo} onChange={e=>setFilters({...filters,fo:e.target.value})}>
+            <option value="">All</option>
+            {PARTIES.fo.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
+          </Select>
+          <Select label="LSP" value={filters.lsp} onChange={e=>setFilters({...filters,lsp:e.target.value})}>
+            <option value="">All</option>
+            {PARTIES.lsp.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+          </Select>
+          <div className="flex items-end">
+            <Button kind="outline" onClick={()=>setFilters({status:'',fo:'',lsp:'',pod:'',q:''})}>Reset</Button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-slate-600">
+              <tr className="text-left">
+                <th className="px-4 py-2 font-medium">Trip</th>
+                <th className="px-4 py-2 font-medium">Route • Vehicle</th>
+                <th className="px-4 py-2 font-medium">FO</th>
+                <th className="px-4 py-2 font-medium">LSP</th>
+                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">POD</th>
+                <th className="px-4 py-2 font-medium text-right">Net Payable</th>
+                <th className="px-4 py-2 font-medium text-right">Net Receivable</th>
+                <th className="px-4 py-2 font-medium text-right">FT Margin</th>
+                <th className="px-4 py-2 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(t => {
+                const fo = PARTIES.fo.find(p=>p.id===t.foId);
+                const lsp = PARTIES.lsp.find(p=>p.id===t.lspId);
+                const tot = tripTotals(t);
+                return (
+                  <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50/50">
+                    <td className="px-4 py-2">
+                      <button onClick={()=>setRoute({name:'trip', id:t.id})} className="font-semibold text-brand-700 hover:underline">{t.id}</button>
+                      <div className="text-[11px] text-slate-400">{t.lr}</div>
+                    </td>
+                    <td className="px-4 py-2"><div className="text-slate-800">{t.route}</div><div className="text-[11px] text-slate-400">{t.vehicle}</div></td>
+                    <td className="px-4 py-2">{fo?.name}</td>
+                    <td className="px-4 py-2"><div>{lsp?.name}</div><div className="text-[11px] text-slate-400">{t.lspBranch}</div></td>
+                    <td className="px-4 py-2"><StatusChip status={t.status}/></td>
+                    <td className="px-4 py-2"><StatusChip status={t.podStatus}/></td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      <div className="font-medium">{INR(tot.foNet)}</div>
+                      <div className="text-[11px] text-slate-400">due {INR(tot.foDue)}</div>
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      <div className="font-medium">{INR(tot.lspNet)}</div>
+                      <div className="text-[11px] text-slate-400">due {INR(tot.lspDue)}</div>
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      <div className="font-medium text-emerald-700">{INR(tot.ftExpMargin)}</div>
+                      <div className="text-[11px] text-slate-400">real {INR(tot.ftRealMargin)}</div>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <Button kind="ghost" size="sm" onClick={()=>setRoute({name:'trip', id:t.id})}>Open →</Button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {filtered.length===0 && <tr><td colSpan={10}><Empty msg="No trips match the filters"/></td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGE: TRIP DETAIL
+   ============================================================ */
+
+function TripDetail({ id }){
+  const { trips, setTrips, pushAudit, showToast, components, rules, role, setRoute } = useApp();
+  const trip = trips.find(t => t.id === id);
+  if (!trip) return <div className="text-slate-500">Trip not found. <button className="text-brand-700" onClick={()=>setRoute({name:'payments'})}>← Back</button></div>;
+  const fo = PARTIES.fo.find(p=>p.id===trip.foId);
+  const lsp = PARTIES.lsp.find(p=>p.id===trip.lspId);
+  const tot = tripTotals(trip);
+
+  function updateTrip(mut){
+    setTrips(ts => ts.map(t => t.id===trip.id ? mut({...t}) : t));
+  }
+
+  // ---- charge/deduction add ----
+  const [addOpen, setAddOpen] = useState(null); // {side, kind}
+  const [addForm, setAddForm] = useState({ cid:'', amt:'', remark:'' });
+
+  function openAdd(side, kind){
+    setAddForm({ cid:'', amt:'', remark:'' });
+    setAddOpen({ side, kind });
+  }
+  function submitAdd(){
+    if (!addForm.cid || !addForm.amt) return;
+    const comp = components.find(c=>c.id===addForm.cid);
+    if (!comp) return;
+    const amt = Number(addForm.amt);
+    // approval rule
+    let status = 'Approved';
+    if (comp.approvalRule === 'always') status = 'Pending';
+    else if (comp.approvalRule.startsWith('>')) {
+      const thr = Number(comp.approvalRule.slice(1));
+      if (amt > thr) status = 'Pending';
+    }
+    updateTrip(t => {
+      const side = addOpen.side; // 'fo' or 'lsp'
+      const k = addOpen.kind==='Charge' ? 'charges' : 'deductions';
+      t[side] = { ...t[side], [k]: [...(t[side][k]||[]), { cid:comp.id, name:comp.name, amt, status, remark:addForm.remark, addedBy:'you@ft', at: new Date().toISOString().slice(0,16).replace('T',' ') }] };
+      return t;
+    });
+    pushAudit({ actor:'you@ft', trip:trip.id, party: addOpen.side.toUpperCase(), type:'Charge added', action:`${addOpen.kind} added`, details:`${comp.name} ${INR(amt)} (${status})` });
+    showToast(`${addOpen.kind} ${status==='Pending'?'added (pending approval)':'added'}`);
+    setAddOpen(null);
+  }
+
+  function approve(side, kind, idx){
+    updateTrip(t => {
+      const arr = [...t[side][kind]];
+      arr[idx] = { ...arr[idx], status:'Approved' };
+      t[side] = { ...t[side], [kind]: arr };
+      return t;
+    });
+    pushAudit({ actor:'finance@ft', trip:trip.id, party:side.toUpperCase(), type:'Edited', action:'Approved', details:`${trip[side][kind][idx].name} ${INR(trip[side][kind][idx].amt)}` });
+    showToast('Approved');
+  }
+
+  // ---- edit charge/deduction ----
+  const [editItem, setEditItem] = useState(null); // { side, kind, idx, newAmt, reason }
+  function openEdit(side, kind, idx){
+    const item = trip[side][kind][idx];
+    setEditItem({ side, kind, idx, currentAmt: item.amt, name: item.name, newAmt: String(item.amt), reason: '' });
+  }
+  function submitEdit(){
+    const { side, kind, idx, currentAmt, newAmt, reason, name } = editItem;
+    const next = Number(newAmt);
+    if (next === currentAmt) { setEditItem(null); return; }
+    updateTrip(t => {
+      const arr = [...t[side][kind]];
+      const cur = { ...arr[idx] };
+      cur.edits = [...(cur.edits||[]), { from:cur.amt, to:next, by:'you@ft', at:new Date().toISOString().slice(0,16).replace('T',' '), reason }];
+      cur.amt = next;
+      arr[idx] = cur;
+      t[side] = { ...t[side], [kind]: arr };
+      return t;
+    });
+    pushAudit({ actor:'you@ft', trip:trip.id, party:side.toUpperCase(), type:'Edited', action:`${kind==='charges'?'Charge':'Deduction'} edited`, details:`${name} ${INR(currentAmt)} → ${INR(next)} ${reason?'('+reason+')':''}` });
+    showToast('Updated');
+    setEditItem(null);
+  }
+
+  // ---- pay/receive ----
+  const [payOpen, setPayOpen] = useState(null); // { kind: 'pay'|'recv', stage }
+  const [payForm, setPayForm] = useState({ amt:'', mode:'Razorpay', utr:'' });
+
+  function openPay(kind, stage){
+    let suggestedAmt = '';
+    if (kind === 'pay') {
+      if (stage === 'Advance') suggestedAmt = Math.round(trip.fo.freight * 0.8 + sumCharges(trip.fo.charges.filter(c=>['C1','C3'].includes(c.cid))));
+      if (stage === 'Balance') suggestedAmt = tot.foDue;
+    } else {
+      if (stage === 'Advance') suggestedAmt = Math.round(trip.lsp.freight * 0.8 + sumCharges(trip.lsp.charges.filter(c=>['C1','C6','C3'].includes(c.cid))));
+      if (stage === 'Balance') suggestedAmt = tot.lspDue;
+    }
+    setPayForm({ amt: String(suggestedAmt), mode: kind==='pay'?'Razorpay':'NEFT', utr:'' });
+    setPayOpen({ kind, stage });
+  }
+  function submitPay(){
+    const amt = Number(payForm.amt);
+    if (!amt) return;
+    const due = payOpen.kind==='pay' ? tot.foDue : tot.lspDue;
+    if (amt > due && !confirm(`Amount ${INR(amt)} exceeds outstanding ${payOpen.kind==='pay'?'payable':'receivable'} of ${INR(due)}. Continue?`)) return;
+    const utr = payForm.utr || ('AUTO-'+Math.floor(Math.random()*1e7));
+    const at = new Date().toISOString().slice(0,16).replace('T',' ');
+    updateTrip(t => {
+      if (payOpen.kind === 'pay') t.fo = { ...t.fo, payments: [...t.fo.payments, { stage: payOpen.stage, amt, utr, at, mode: payForm.mode, by:'you@ft' }] };
+      else                          t.lsp = { ...t.lsp, receipts: [...t.lsp.receipts, { stage: payOpen.stage, amt, utr, at, mode: payForm.mode, by:'you@ft' }] };
+      return t;
+    });
+    pushAudit({ actor:'you@ft', trip:trip.id, party: payOpen.kind==='pay'?'FO':'LSP', type:'Payment paid', action: payOpen.kind==='pay'?`${payOpen.stage} paid`:`${payOpen.stage} received`, details: `${INR(amt)} via ${payForm.mode} UTR ${utr}` });
+    showToast(`${payOpen.stage} ${payOpen.kind==='pay'?'paid':'received'}`);
+    setPayOpen(null);
+  }
+
+  // ---- comments ----
+  const [comments, setComments] = useState([
+    { at:'2026-05-09 12:01', by:'priya@ft', text:'Detention discussed with LSP — they confirmed ₹3k/₹4k split.' },
+  ]);
+  const [newCmt, setNewCmt] = useState('');
+
+  // ---- doc gen ----
+  const [docs, setDocs] = useState([
+    { name:'Loading Memo', side:'LSP', generatedAt:'2026-05-09 15:00', version:1, tag:'Auto', by:'system' },
+  ]);
+  function genDoc(name, side, mode='Manual'){
+    setDocs(d => {
+      const prior = d.filter(x=>x.name===name && x.side===side);
+      const nextV = prior.length ? Math.max(...prior.map(x=>x.version))+1 : 1;
+      return [...d, { name, side, generatedAt: new Date().toISOString().slice(0,16).replace('T',' '), version: nextV, tag: mode, by: mode==='Auto'?'system':'you@ft' }];
+    });
+    pushAudit({ actor: mode==='Auto'?'system':'you@ft', trip:trip.id, party:side, type:'Edited', action:`${name} generated`, details: `${mode} • ${side} side` });
+    showToast(`${name} v${(docs.filter(x=>x.name===name && x.side===side).length||0)+1} generated`);
+  }
+
+  // ---- cancel trip ----
+  function cancelTrip(){
+    if (!confirm('Cancel this trip? Freight will be zeroed; existing payments move to wallet.')) return;
+    updateTrip(t => {
+      t.status = 'CANCELLED';
+      t.fo = { ...t.fo, freight:0, charges:[], deductions:[] };
+      t.lsp = { ...t.lsp, freight:0, charges:[], deductions:[] };
+      return t;
+    });
+    pushAudit({ actor:'you@ft', trip:trip.id, action:'Trip cancelled', details:`Freight zeroed; payments moved to wallets (mock)` });
+    showToast('Trip cancelled and payments moved to wallets');
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <button onClick={()=>setRoute({name:'payments'})} className="text-sm text-brand-700 hover:underline">← Payments</button>
+          <div className="flex items-center gap-3 mt-1">
+            <h1 className="text-xl font-semibold text-slate-900">{trip.id}</h1>
+            <StatusChip status={trip.status}/>
+            <span className="text-slate-500 text-sm">{trip.route} • {trip.vehicle} • LR {trip.lr}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={trip.status} onChange={e=>{const ns=e.target.value;updateTrip(t=>({...t,status:ns}));pushAudit({actor:'you@ft',trip:trip.id,action:'Status changed',details:`${trip.status} → ${ns}`,party:'',type:'Status'});showToast(`Status → ${ns}`);}}>
+            {['LOADED','DISPATCHED','IN-TRANSIT','UNLOADED','SETTLED','CANCELLED'].map(s=><option key={s}>{s}</option>)}
+          </Select>
+          <Button kind="danger" onClick={cancelTrip}>Cancel Trip</Button>
+        </div>
+      </div>
+
+      {/* Summary strip */}
+      <div className="grid grid-cols-4 gap-3">
+        <SummaryCard label="Net Payable (FO)" value={INR(tot.foNet)} sub={`Due ${INR(tot.foDue)}`} tone="rose"/>
+        <SummaryCard label="Net Receivable (LSP)" value={INR(tot.lspNet)} sub={`Due ${INR(tot.lspDue)}`} tone="emerald"/>
+        <SummaryCard label="FT Expected Margin" value={INR(tot.ftExpMargin)} sub={`Realized ${INR(tot.ftRealMargin)}`} tone="brand"/>
+        <SummaryCard label="Dala Charges" value={INR(tot.ftCommission)} sub={`Auto from slabs`} tone="slate"/>
+      </div>
+
+      {/* Tracking */}
+      <Section id="tracking" title="Trip Tracking" defaultOpen={false} right={<Button size="sm" kind="ghost" onClick={()=>showToast('Refreshed')}>↻ Refresh</Button>}>
+        <div className="grid grid-cols-4 gap-3 text-sm">
+          <Field label="Started" value={trip.startedAt}/>
+          <Field label="Unloaded" value={trip.unloadedAt||'—'}/>
+          <Field label="POD" value={<StatusChip status={trip.podStatus}/>}/>
+          <Field label="Current Status" value={<StatusChip status={trip.status}/>}/>
+        </div>
+        <Timeline trip={trip}/>
+        <div className="font-semibold text-sm text-slate-700 mt-5 mb-2">Trip Documents</div>
+        <TripDocs trip={trip} updateTrip={updateTrip} pushAudit={pushAudit} showToast={showToast}/>
+      </Section>
+
+      {/* FO Section */}
+      <Section id="fo" title={`Fleet Owner — ${fo?.name}`} right={<div className="flex gap-2"><Button size="sm" kind="soft" onClick={()=>openAdd('fo','Charge')}>+ Charge</Button><Button size="sm" kind="outline" onClick={()=>openAdd('fo','Deduction')}>+ Deduction</Button></div>}>
+        <PartySectionTable side="fo" trip={trip} totals={tot} fo={fo} onApprove={approve} onPay={(stage)=>openPay('pay',stage)} onEdit={openEdit}/>
+      </Section>
+
+      {/* LSP Section */}
+      <Section id="lsp" title={`LSP — ${lsp?.name} (${trip.lspBranch})`} right={<div className="flex gap-2"><Button size="sm" kind="soft" onClick={()=>openAdd('lsp','Charge')}>+ Charge</Button><Button size="sm" kind="outline" onClick={()=>openAdd('lsp','Deduction')}>+ Deduction</Button></div>}>
+        <PartySectionTable side="lsp" trip={trip} totals={tot} fo={fo} onApprove={approve} onPay={(stage)=>openPay('recv',stage)} onEdit={openEdit}/>
+      </Section>
+
+      {/* FT Section */}
+      <Section id="ft" title="Freight Tiger — Earnings & Margin" defaultOpen={false}>
+        <div className="grid grid-cols-3 gap-3 text-sm">
+          <Field label="Dala Charges (Auto)" value={INR(tot.ftCommission)}/>
+          <Field label="Expected Margin" value={INR(tot.ftExpMargin)}/>
+          <Field label="Realized Margin" value={INR(tot.ftRealMargin)}/>
+        </div>
+        <div className="text-xs text-slate-500 mt-2">Dala Charges (commission) derived from rules engine slabs based on LSP freight {INR(trip.lsp.freight)}.</div>
+      </Section>
+
+      {/* POD */}
+      <Section id="pod" title="POD Details">
+        <PODSection trip={trip} updateTrip={updateTrip} pushAudit={pushAudit} showToast={showToast}/>
+      </Section>
+
+      {/* Documents */}
+      <Section id="docs" title="Documents" right={
+        <div className="flex gap-2">
+          <Button size="sm" kind="ghost" onClick={()=>genDoc('Loading Memo','LSP')}>Generate Loading Memo</Button>
+          <Button size="sm" kind="ghost" onClick={()=>genDoc('Bill of Supply','LSP')}>Generate BoS</Button>
+          <Button size="sm" kind="ghost" onClick={()=>genDoc('Credit Note','FO')}>Generate CN</Button>
+        </div>
+      }>
+        <table className="min-w-full text-sm">
+          <thead className="text-slate-500 text-xs"><tr className="text-left">
+            <th className="py-2">Document</th><th>Side</th><th>Version</th><th>Tag</th><th>Generated</th><th>By</th><th></th>
+          </tr></thead>
+          <tbody>
+            {docs.map((d,i)=>(
+              <tr key={i} className="border-t border-slate-100">
+                <td className="py-2 font-medium">{d.name}</td>
+                <td>{d.side}</td>
+                <td className="font-mono text-xs">v{d.version}</td>
+                <td><StatusChip status={d.tag}/></td>
+                <td className="text-slate-500">{d.generatedAt}</td>
+                <td className="text-xs text-slate-500">{d.by}</td>
+                <td className="text-right"><Button kind="ghost" size="sm" onClick={()=>showToast('Download started (mock)')}>Download</Button></td>
+              </tr>
+            ))}
+            {docs.length===0 && <tr><td colSpan={7}><Empty msg="No documents yet"/></td></tr>}
+          </tbody>
+        </table>
+      </Section>
+
+      {/* Comments */}
+      <Section id="comments" title="Comments & Notes" defaultOpen={false}>
+        <div className="space-y-2">
+          {comments.map((c,i)=>(
+            <div key={i} className="text-sm bg-slate-50 rounded-lg p-3">
+              <div className="text-slate-700">{c.text}</div>
+              <div className="text-[11px] text-slate-400 mt-1">{c.by} • {c.at}</div>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <input className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300" placeholder="Add a comment..." value={newCmt} onChange={e=>setNewCmt(e.target.value)} />
+            <Button onClick={()=>{ if(!newCmt) return; setComments(cs=>[...cs,{at:new Date().toISOString().slice(0,16).replace('T',' '),by:'you@ft',text:newCmt}]); setNewCmt(''); }}>Post</Button>
+          </div>
+        </div>
+      </Section>
+
+      {/* Audit */}
+      <Section id="audit" title="Audit Log" defaultOpen={false}>
+        <TripAudit tripId={trip.id}/>
+      </Section>
+
+      {/* Add modal */}
+      <Modal open={!!addOpen} onClose={()=>setAddOpen(null)} title={addOpen?`Add ${addOpen.kind} • ${addOpen.side.toUpperCase()}`:''} footer={
+        <>
+          <Button kind="outline" onClick={()=>setAddOpen(null)}>Cancel</Button>
+          <Button onClick={submitAdd}>Save</Button>
+        </>
+      }>
+        <div className="space-y-3">
+          <Select label="Component" value={addForm.cid} onChange={e=>setAddForm({...addForm,cid:e.target.value})}>
+            <option value="">Select…</option>
+            {components.filter(c=>c.kind===addOpen?.kind && (c.side==='Both'|| (addOpen?.side==='fo' && c.side==='Payable') || (addOpen?.side==='lsp' && c.side==='Receivable'))).map(c=>(
+              <option key={c.id} value={c.id}>{c.name} {c.isAuto?'(Auto)':''}</option>
+            ))}
+          </Select>
+          <Input label="Amount (₹)" type="number" value={addForm.amt} onChange={e=>setAddForm({...addForm,amt:e.target.value})}/>
+          <Input label="Remark" value={addForm.remark} onChange={e=>setAddForm({...addForm,remark:e.target.value})} placeholder="Optional"/>
+          {addForm.cid && (() => {
+            const c = components.find(x=>x.id===addForm.cid);
+            if (!c) return null;
+            const amt = Number(addForm.amt||0);
+            let status = 'Approved';
+            if (c.approvalRule === 'always') status = 'Pending';
+            else if (c.approvalRule.startsWith('>') && amt > Number(c.approvalRule.slice(1))) status = 'Pending';
+            return (
+              <div className="text-xs bg-slate-50 p-3 rounded-lg">
+                Approval rule: <span className="font-mono">{c.approvalRule}</span> → on save it will be <span className="font-semibold">{status}</span>.<br/>
+                Limits: max abs {INR(c.maxAbs)}, max {c.maxPct}% of freight.
+              </div>
+            );
+          })()}
+        </div>
+      </Modal>
+
+      {/* Edit charge/deduction modal */}
+      <Modal open={!!editItem} onClose={()=>setEditItem(null)} title={editItem?`Edit ${editItem.name}`:''} footer={
+        <>
+          <Button kind="outline" onClick={()=>setEditItem(null)}>Cancel</Button>
+          <Button onClick={submitEdit}>Save</Button>
+        </>
+      }>
+        {editItem && (
+          <div className="space-y-3">
+            <div className="text-xs text-slate-500">Current value: <span className="font-semibold text-slate-700">{INR(editItem.currentAmt)}</span></div>
+            <Input label="New Amount (₹)" type="number" value={editItem.newAmt} onChange={e=>setEditItem({...editItem,newAmt:e.target.value})}/>
+            <Input label="Reason for change" value={editItem.reason} onChange={e=>setEditItem({...editItem,reason:e.target.value})} placeholder="e.g. Confirmed with FO"/>
+            <div className="text-xs text-amber-700 bg-amber-50 p-2 rounded-lg">A new ledger event will be created (append-only). The old value remains in the history.</div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Pay modal */}
+      <Modal open={!!payOpen} onClose={()=>setPayOpen(null)} title={payOpen?(payOpen.kind==='pay'?`Pay ${payOpen.stage} to ${fo?.name}`:`Receive ${payOpen.stage} from ${lsp?.name}`):''} footer={
+        <>
+          <Button kind="outline" onClick={()=>setPayOpen(null)}>Cancel</Button>
+          <Button onClick={submitPay}>{payOpen?.kind==='pay'?'Pay Now':'Record Receipt'}</Button>
+        </>
+      }>
+        <div className="space-y-3">
+          <Input label="Amount (₹)" type="number" value={payForm.amt} onChange={e=>setPayForm({...payForm,amt:e.target.value})}/>
+          <Select label="Mode" value={payForm.mode} onChange={e=>setPayForm({...payForm,mode:e.target.value})}>
+            {(payOpen?.kind==='pay'?['Razorpay','NEFT','Cash','Cheque']:['NEFT','RTGS','UPI','Cheque','Cash']).map(m=><option key={m}>{m}</option>)}
+          </Select>
+          <Input label="UTR / Reference" value={payForm.utr} onChange={e=>setPayForm({...payForm,utr:e.target.value})} placeholder="Leave blank to auto-generate"/>
+          <div className="text-xs bg-amber-50 text-amber-800 p-3 rounded-lg">
+            Gating checks: {payOpen?.stage==='Balance' && trip.podStatus!=='Approved' ? <span className="text-rose-700">POD not approved — balance payment normally blocked (allowed in prototype)</span> : 'Pass'}
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function SummaryCard({ label, value, sub, tone='brand' }){
+  const tones = {
+    brand:'border-brand-100 bg-brand-50/30',
+    emerald:'border-emerald-100 bg-emerald-50/30',
+    rose:'border-rose-100 bg-rose-50/30',
+    slate:'border-slate-200 bg-slate-50/30',
+  };
+  return (
+    <div className={cls('rounded-2xl border p-4', tones[tone])}>
+      <div className="text-xs text-slate-500 font-medium">{label}</div>
+      <div className="text-2xl font-semibold text-slate-900 mt-1 tabular-nums">{value}</div>
+      <div className="text-[11px] text-slate-500 mt-1">{sub}</div>
+    </div>
+  );
+}
+
+const Field = ({ label, value }) => (
+  <div><div className="text-[11px] text-slate-500 font-medium uppercase tracking-wide">{label}</div><div className="text-sm text-slate-800 mt-1">{value}</div></div>
+);
+
+function Timeline({ trip }){
+  const points = [
+    { label:'Created', at:trip.startedAt, done:true },
+    { label:'Loaded', at:trip.startedAt, done:true },
+    { label:'In Transit', at:trip.startedAt, done:trip.status!=='LOADED' },
+    { label:'Unloaded', at:trip.unloadedAt, done:!!trip.unloadedAt },
+    { label:'POD', at:trip.unloadedAt, done:trip.podStatus==='Approved' },
+    { label:'Settled', at:null, done:trip.status==='SETTLED' },
+  ];
+  return (
+    <div className="flex items-center gap-1 mt-4 overflow-x-auto pb-1">
+      {points.map((p,i)=>(
+        <Fragment key={i}>
+          <div className="text-center min-w-[90px]">
+            <div className={cls('w-3 h-3 mx-auto rounded-full', p.done?'bg-emerald-500':'bg-slate-300')}/>
+            <div className="text-[11px] mt-1 font-medium text-slate-700">{p.label}</div>
+            <div className="text-[10px] text-slate-400">{p.at||'—'}</div>
+          </div>
+          {i<points.length-1 && <div className={cls('h-px flex-1', points[i+1].done?'bg-emerald-300':'bg-slate-200')}/>}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+function PartySectionTable({ side, trip, totals, fo, onApprove, onPay, onEdit }){
+  const data = trip[side];
+  const isFO = side === 'fo';
+  const payments = isFO ? data.payments : data.receipts;
+  const labels = isFO ? {pay:'Paid', net:'Net Payable', due:'Balance Payable'} : {pay:'Received', net:'Net Receivable', due:'Balance Receivable'};
+  const charges = isFO ? totals.foCharges : totals.lspCharges;
+  const ded = isFO ? totals.foDed : totals.lspDed;
+  const net = isFO ? totals.foNet : totals.lspNet;
+  const due = isFO ? totals.foDue : totals.lspDue;
+
+  const advancePaid = (payments||[]).some(p=>p.stage==='Advance');
+  const balancePaid = (payments||[]).some(p=>p.stage==='Balance');
+  const advanceAllowed = ['DISPATCHED','IN-TRANSIT','UNLOADED','SETTLED'].includes(trip.status);
+  const balanceAllowed = ['UNLOADED','SETTLED'].includes(trip.status);
+
+  const advanceDisabled = advancePaid || !advanceAllowed;
+  const balanceDisabled = balancePaid || !balanceAllowed;
+
+  return (
+    <div>
+      <div className="grid grid-cols-5 gap-3 mb-4">
+        <MiniStat label="Base Freight" value={INR(data.freight)}/>
+        <MiniStat label="Charges (approved)" value={INR(charges)}/>
+        <MiniStat label="Deductions (approved)" value={INR(ded)}/>
+        <MiniStat label={labels.net} value={INR(net)}/>
+        <MiniStat label={labels.due} value={INR(due)} tone={due>0?'rose':'emerald'}/>
+      </div>
+
+      {/* Charges */}
+      <div className="font-semibold text-sm text-slate-700 mb-2">Charges</div>
+      <ItemTable items={data.charges} side={side} kind="charges" onApprove={onApprove} onEdit={onEdit}/>
+      <div className="font-semibold text-sm text-slate-700 mt-4 mb-2">Deductions</div>
+      <ItemTable items={data.deductions} side={side} kind="deductions" onApprove={onApprove} onEdit={onEdit}/>
+
+      {/* Payments */}
+      <div className="flex items-center justify-between mt-5 mb-2">
+        <div className="font-semibold text-sm text-slate-700">{isFO?'Payments':'Receipts'}</div>
+        <div className="flex gap-2">
+          <Button size="sm" kind="soft" disabled={advanceDisabled} className={advanceDisabled?'opacity-50 cursor-not-allowed':''} onClick={()=>!advanceDisabled && onPay('Advance')} title={advancePaid?'Advance already paid':(!advanceAllowed?'Trip must be Dispatched or In-Transit':'')}>+ Advance{advancePaid&&' ✓'}</Button>
+          <Button size="sm" kind="soft" onClick={()=>onPay('Interim')}>+ Interim</Button>
+          <Button size="sm" kind="primary" disabled={balanceDisabled} className={balanceDisabled?'opacity-50 cursor-not-allowed':''} onClick={()=>!balanceDisabled && onPay('Balance')} title={balancePaid?'Balance already paid':(!balanceAllowed?'Vehicle must be Unloaded':'')}>+ Balance{balancePaid&&' ✓'}</Button>
+        </div>
+      </div>
+      <table className="min-w-full text-sm">
+        <thead className="text-slate-500 text-xs"><tr className="text-left">
+          <th className="py-2">Stage</th><th>Amount</th><th>Mode</th><th>Reference</th><th>At</th>
+        </tr></thead>
+        <tbody>
+          {(payments||[]).map((p,i)=>(
+            <tr key={i} className="border-t border-slate-100">
+              <td className="py-2 font-medium">{p.stage}</td>
+              <td className="tabular-nums">{INR(p.amt)}</td>
+              <td>{p.mode||'NEFT'}</td>
+              <td className="font-mono text-xs">{p.utr}</td>
+              <td className="text-slate-500">{p.at}</td>
+            </tr>
+          ))}
+          {(payments||[]).length===0 && <tr><td colSpan={5}><Empty msg="No payments yet"/></td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ItemTable({ items, side, kind, onApprove, onEdit }){
+  const [hist, setHist] = useState(null); // index whose history popover is open
+  if (!items?.length) return <Empty msg="None yet"/>;
+  return (
+    <table className="min-w-full text-sm">
+      <thead className="text-slate-500 text-xs"><tr className="text-left">
+        <th className="py-2">Component</th><th>Amount</th><th>Status</th><th>Added by</th><th>Remark</th><th className="text-right">Actions</th>
+      </tr></thead>
+      <tbody>
+        {items.map((c,i)=>(
+          <tr key={i} className="border-t border-slate-100 align-top">
+            <td className="py-2 font-medium">
+              <div className="flex items-center gap-1">
+                {c.name}
+                {(c.edits?.length>0) && (
+                  <button className="relative text-[11px] text-amber-700 hover:text-amber-900" title={`${c.edits.length} edit${c.edits.length>1?'s':''}`} onClick={()=>setHist(hist===i?null:i)}>
+                    🕘
+                    {hist===i && (
+                      <div className="absolute z-30 left-0 mt-1 w-80 bg-white border border-slate-200 rounded-xl shadow-xl p-3 text-left">
+                        <div className="text-xs font-semibold text-slate-700 mb-2">Edit history</div>
+                        {c.edits.map((e,k)=>(
+                          <div key={k} className="text-xs text-slate-600 border-t border-slate-100 pt-2 mt-2 first:border-0 first:pt-0 first:mt-0">
+                            <div><span className="font-mono">{INR(e.from)}</span> → <span className="font-mono font-semibold">{INR(e.to)}</span></div>
+                            <div className="text-[11px] text-slate-500">{e.by} • {e.at}</div>
+                            {e.reason && <div className="text-[11px] italic text-slate-500">"{e.reason}"</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </button>
+                )}
+              </div>
+            </td>
+            <td className="tabular-nums">{INR(c.amt)}</td>
+            <td><StatusChip status={c.status}/></td>
+            <td className="text-xs">
+              <div className="text-slate-700">{c.addedBy||'—'}</div>
+              <div className="text-[10px] text-slate-400">{c.at}</div>
+            </td>
+            <td className="text-xs text-slate-500">{c.remark||'—'}</td>
+            <td className="text-right whitespace-nowrap">
+              {c.status==='Pending' && <Button size="sm" kind="success" onClick={()=>onApprove(side,kind,i)}>Approve</Button>}
+              {' '}
+              <Button size="sm" kind="ghost" onClick={()=>onEdit && onEdit(side,kind,i)} title="Edit (append-only)">✎ Edit</Button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function MiniStat({ label, value, tone }){
+  const tones = { rose:'text-rose-700', emerald:'text-emerald-700' };
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <div className="text-[11px] text-slate-500 uppercase font-medium tracking-wide">{label}</div>
+      <div className={cls('text-base font-semibold mt-1 tabular-nums', tones[tone]||'text-slate-900')}>{value}</div>
+    </div>
+  );
+}
+
+function TripAudit({ tripId }){
+  const { audit } = useApp();
+  const [party, setParty] = useState('');
+  const [type, setType]   = useState('');
+  const rows = audit.filter(a => a.trip===tripId && (!party || a.party===party) && (!type || a.type===type));
+  const types = ['Charge added','Edited','Payment paid','Status'];
+  return (
+    <div>
+      <div className="flex flex-wrap items-end gap-3 mb-3 p-3 bg-slate-50 rounded-lg">
+        <Select label="Party" value={party} onChange={e=>setParty(e.target.value)}>
+          <option value="">All</option>
+          <option value="FO">FO</option>
+          <option value="LSP">LSP</option>
+        </Select>
+        <Select label="Action" value={type} onChange={e=>setType(e.target.value)}>
+          <option value="">All</option>
+          {types.map(t=><option key={t}>{t}</option>)}
+        </Select>
+        {(party||type) && <Button kind="ghost" size="sm" onClick={()=>{setParty('');setType('');}}>Clear filters</Button>}
+        <div className="ml-auto text-xs text-slate-500">{rows.length} entries</div>
+      </div>
+      <table className="min-w-full text-sm">
+        <thead className="text-slate-500 text-xs"><tr className="text-left">
+          <th className="py-2">At</th><th>Actor</th><th>Party</th><th>Action</th><th>Details</th>
+        </tr></thead>
+        <tbody>
+          {rows.map(r=>(
+            <tr key={r.id} className="border-t border-slate-100">
+              <td className="py-2 text-slate-500 whitespace-nowrap">{r.at}</td>
+              <td className="text-xs">{r.actor}</td>
+              <td>{r.party && <span className="chip bg-slate-100 text-slate-700">{r.party}</span>}</td>
+              <td className="font-medium">{r.action}</td>
+              <td className="text-slate-600">{r.details}</td>
+            </tr>
+          ))}
+          {rows.length===0 && <tr><td colSpan={5}><Empty msg="No audit entries match"/></td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ============================================================
+   TRIP DOCS (LR / Invoice / RC) + POD SECTION
+   ============================================================ */
+
+function TripDocs({ trip, updateTrip, pushAudit, showToast }){
+  const types = [
+    { key:'lr', label:'LR (Lorry Receipt)' },
+    { key:'invoice', label:'Invoice' },
+    { key:'rc', label:'RC (Registration Certificate)' },
+  ];
+  function upload(key){
+    const file = prompt(`Filename for ${key.toUpperCase()}?`, `${key.toUpperCase()}-${trip.id}.pdf`);
+    if (!file) return;
+    updateTrip(t => ({ ...t, docs: { ...(t.docs||{}), [key]: { file, uploadedBy:'you@ft', at:new Date().toISOString().slice(0,16).replace('T',' '), approved:true }}}));
+    pushAudit({ actor:'you@ft', trip:trip.id, party:'', type:'Edited', action:`${key.toUpperCase()} uploaded`, details:file });
+    showToast(`${key.toUpperCase()} uploaded`);
+  }
+  function approve(key){
+    updateTrip(t => ({ ...t, docs: { ...(t.docs||{}), [key]: { ...(t.docs?.[key]||{}), approved:true }}}));
+    pushAudit({ actor:'you@ft', trip:trip.id, party:'', type:'Edited', action:`${key.toUpperCase()} approved`, details:trip.docs?.[key]?.file||'' });
+    showToast(`${key.toUpperCase()} approved`);
+  }
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {types.map(t => {
+        const d = trip.docs?.[t.key];
+        return (
+          <div key={t.key} className="border border-slate-200 rounded-xl p-3">
+            <div className="text-sm font-semibold text-slate-800 mb-2">{t.label}</div>
+            {d ? (
+              <>
+                <div className="text-xs text-slate-600 font-mono">{d.file}</div>
+                <div className="text-[11px] text-slate-500">Uploaded by {d.uploadedBy} • {d.at}</div>
+                <div className="mt-2 flex items-center gap-2">
+                  {d.approved ? <StatusChip status="Approved"/> : <StatusChip status="Pending"/>}
+                  <div className="ml-auto flex gap-1">
+                    <Button kind="ghost" size="sm" onClick={()=>showToast('Preview (mock)')}>View</Button>
+                    {!d.approved && <Button kind="success" size="sm" onClick={()=>approve(t.key)}>Approve</Button>}
+                    <Button kind="ghost" size="sm" onClick={()=>upload(t.key)}>Replace</Button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div>
+                <div className="text-xs text-slate-400 italic">Not uploaded</div>
+                <Button kind="outline" size="sm" className="mt-2" onClick={()=>upload(t.key)}>⬆ Upload</Button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PODSection({ trip, updateTrip, pushAudit, showToast }){
+  function set(field, val){
+    updateTrip(t => ({ ...t, [field]: val }));
+  }
+  function toggleReason(r){
+    updateTrip(t => {
+      const cur = t.podDisputeReasons || [];
+      const next = cur.includes(r) ? cur.filter(x=>x!==r) : [...cur, r];
+      return { ...t, podDisputeReasons: next };
+    });
+  }
+  const isDisputed = trip.podAudit === 'Disputed';
+  return (
+    <div className="space-y-5">
+      <div>
+        <div className="text-xs font-semibold text-slate-500 uppercase mb-2">POD Status</div>
+        <div className="flex gap-6">
+          {['POD Available','POD Submitted Onsite','POD Lost'].map(opt => (
+            <label key={opt} className="flex items-center gap-2 text-sm">
+              <input type="radio" name="podAvail" checked={trip.podAvailability===opt} onChange={()=>{set('podAvailability',opt);pushAudit({actor:'you@ft',trip:trip.id,party:'',type:'Edited',action:'POD status changed',details:opt});}}/>
+              {opt}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <div className="text-xs font-semibold text-slate-500 uppercase mb-2">Upload POD</div>
+          <div className="flex items-center gap-2">
+            <input className="px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white flex-1" placeholder="56091666.pdf" defaultValue={trip.podFile||''}/>
+            <Button kind="outline" size="sm" onClick={()=>{set('podFile',`POD-${trip.id}.pdf`); showToast('POD uploaded');}}>⬆</Button>
+          </div>
+          {trip.podFile && <div className="text-xs text-brand-700 mt-1"><a className="hover:underline cursor-pointer">View</a> · <a className="hover:underline cursor-pointer">Download</a></div>}
+        </div>
+        <Input label="Soft Copy of POD Received on" type="date" defaultValue=""/>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox"/> Hard Copy of POD Received</label>
+          <Input label="Received Date" type="date" className="mt-2"/>
+        </div>
+        <div>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox"/> Hard Copy of POD shared with LSP</label>
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            <Input label="Dispatched Date" type="date"/>
+            <Input label="Tracking Number" placeholder="Tracking Number"/>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs font-semibold text-slate-500 uppercase mb-2">POD Audit</div>
+        <div className="flex flex-col gap-2">
+          {['Audit Pending','Clean','Disputed'].map(opt => (
+            <label key={opt} className="flex items-center gap-2 text-sm">
+              <input type="radio" name="podAudit" checked={trip.podAudit===opt} onChange={()=>{set('podAudit',opt);pushAudit({actor:'you@ft',trip:trip.id,party:'',type:'Edited',action:'POD audit changed',details:opt});}}/>
+              {opt} POD
+            </label>
+          ))}
+          {isDisputed && (
+            <div className="ml-6 flex flex-wrap gap-4 mt-1">
+              {['Shortages','Damages','Okay Seal is Unbroken','Wrong Product','Brand Mismatch'].map(r => (
+                <label key={r} className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={(trip.podDisputeReasons||[]).includes(r)} onChange={()=>toggleReason(r)}/>
+                  {r}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs font-semibold text-slate-500 uppercase mb-2">Remark / Comment on POD</div>
+        <textarea className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white" rows={3} placeholder="Brand mismatch / shortage description..." value={trip.podRemark||''} onChange={e=>set('podRemark',e.target.value)}/>
+        <a className="text-brand-700 text-xs hover:underline cursor-pointer" onClick={()=>showToast('Opens POD-related deduction modal')}>+ Add POD-related deductions</a>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={()=>{
+          // map summary status into trip.podStatus
+          const s = trip.podAvailability==='POD Lost' ? 'NA'
+                  : trip.podAudit==='Clean' ? 'Approved'
+                  : trip.podAvailability==='POD Submitted Onsite' ? 'Submitted' : 'Audit Pending';
+          set('podStatus', s);
+          pushAudit({ actor:'you@ft', trip:trip.id, party:'', type:'Edited', action:'POD details updated', details:`Availability ${trip.podAvailability} • Audit ${trip.podAudit}` });
+          showToast('POD details updated');
+        }}>Update</Button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGE: FO LIST + DETAIL
+   ============================================================ */
+
+function FOListPage(){
+  const { trips, wallets, setRoute } = useApp();
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-xl font-semibold">Fleet Owners</h1><p className="text-sm text-slate-500">Party-level ledgers, wallets and trip rollups</p></div>
+        <Button kind="outline">Download FO Master</Button>
+      </div>
+      <Card padded={false}>
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-slate-600">
+            <tr className="text-left">
+              <th className="px-4 py-2 font-medium">FO</th>
+              <th className="px-4 py-2 font-medium">PAN / GST</th>
+              <th className="px-4 py-2 font-medium">City</th>
+              <th className="px-4 py-2 font-medium">TDS</th>
+              <th className="px-4 py-2 font-medium text-right">Trips</th>
+              <th className="px-4 py-2 font-medium text-right">FT Owes</th>
+              <th className="px-4 py-2 font-medium text-right">FO Owes</th>
+              <th className="px-4 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {PARTIES.fo.map(fo => {
+              const w = wallets[fo.id]||{ftOwes:0,partyOwes:0};
+              const count = trips.filter(t=>t.foId===fo.id).length;
+              return (
+                <tr key={fo.id} className="border-t border-slate-100 hover:bg-slate-50/50">
+                  <td className="px-4 py-2"><button onClick={()=>setRoute({name:'fo-detail', id:fo.id})} className="font-semibold text-brand-700 hover:underline">{fo.name}</button><div className="text-[11px] text-slate-400">{fo.id}</div></td>
+                  <td className="px-4 py-2 text-xs">{fo.pan}<div className="text-slate-400">{fo.gst||'No GST'}</div></td>
+                  <td className="px-4 py-2">{fo.city}</td>
+                  <td className="px-4 py-2">{fo.hasExemption?'Exempt':`${fo.tdsRate}%`}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{count}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-emerald-700">{INR(w.ftOwes)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-rose-700">{INR(w.partyOwes)}</td>
+                  <td className="px-4 py-2 text-right"><Button size="sm" kind="ghost" onClick={()=>setRoute({name:'fo-detail', id:fo.id})}>Open →</Button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+function PartyLedger({ kind, id }){
+  // kind: 'fo' | 'lsp'
+  const { trips, wallets, setRoute } = useApp();
+  const list = kind==='fo' ? PARTIES.fo : PARTIES.lsp;
+  const party = list.find(p=>p.id===id);
+  if (!party) return <div>Party not found.</div>;
+  const w = wallets[id] || { ftOwes:0, partyOwes:0, events:[] };
+  const partyTrips = trips.filter(t => kind==='fo' ? t.foId===id : t.lspId===id);
+
+  let totalNet = 0, totalSettled = 0, podPending = 0, podSubmitted = 0, auditedPending = 0, unauditedPending = 0;
+  partyTrips.forEach(t => {
+    const tot = tripTotals(t);
+    const net = kind==='fo' ? tot.foNet : tot.lspNet;
+    const paid = kind==='fo' ? tot.foPaid : tot.lspRecvd;
+    totalNet += net; totalSettled += paid;
+    if (t.podStatus==='Pending') podPending++;
+    if (t.podStatus==='Submitted') podSubmitted++;
+    if (t.podStatus==='Approved' && (kind==='fo'?tot.foDue:tot.lspDue) > 0) auditedPending += (kind==='fo'?tot.foDue:tot.lspDue);
+    if ((t.podStatus==='Pending'||t.podStatus==='Submitted') && (kind==='fo'?tot.foDue:tot.lspDue) > 0) unauditedPending += (kind==='fo'?tot.foDue:tot.lspDue);
+  });
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <button onClick={()=>setRoute({name:kind==='fo'?'fo':'lsp'})} className="text-sm text-brand-700 hover:underline">← {kind==='fo'?'Fleet Owners':'LSPs'}</button>
+        <div className="flex items-center justify-between mt-1">
+          <h1 className="text-xl font-semibold">{party.name} <span className="text-slate-400 text-base font-normal">• {party.id}</span></h1>
+          <div className="flex gap-2"><Button kind="outline">Download Statement</Button><Button>Record Payment</Button></div>
+        </div>
+        <div className="text-sm text-slate-500 mt-1">PAN {party.pan} {party.gst&&`• GST ${party.gst}`}{kind==='fo'&&` • TDS ${party.hasExemption?'Exempt':party.tdsRate+'%'}`}{kind==='lsp'&&` • Credit ${party.creditDays}d`}</div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-3">
+        <SummaryCard label="Trip Count" value={partyTrips.length} sub={`POD pending ${podPending} • submitted ${podSubmitted}`} tone="slate"/>
+        <SummaryCard label={kind==='fo'?'Total Payable':'Total Receivable'} value={INR(totalNet)} sub={`Settled ${INR(totalSettled)}`} tone="brand"/>
+        <SummaryCard label="FT Owes Party" value={INR(w.ftOwes)} sub="Refund / credit wallet" tone="emerald"/>
+        <SummaryCard label="Party Owes FT" value={INR(w.partyOwes)} sub="Recovery wallet" tone="rose"/>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Card title="Audited & Payment Pending" >
+          <div className="text-2xl font-semibold tabular-nums">{INR(auditedPending)}</div>
+          <div className="text-xs text-slate-500 mt-1">POD approved but not yet settled</div>
+        </Card>
+        <Card title="Unaudited & Payment Pending">
+          <div className="text-2xl font-semibold tabular-nums">{INR(unauditedPending)}</div>
+          <div className="text-xs text-slate-500 mt-1">POD not yet approved and not yet settled</div>
+        </Card>
+      </div>
+
+      <Card title="Wallet — Two Bucket Ledger" right={<div className="text-xs text-slate-500">Net exposure: <span className="font-semibold text-slate-800">{INR((w.ftOwes||0)-(w.partyOwes||0))}</span></div>}>
+        <table className="min-w-full text-sm">
+          <thead className="text-slate-500 text-xs"><tr className="text-left"><th className="py-2">At</th><th>Type</th><th>Bucket</th><th className="text-right">Amount</th><th>Ref</th><th>Note</th></tr></thead>
+          <tbody>
+            {(w.events||[]).map((e,i)=>(
+              <tr key={i} className="border-t border-slate-100">
+                <td className="py-2 text-slate-500">{e.at}</td>
+                <td className="font-medium">{e.type}</td>
+                <td><span className={cls('chip', /Recovery|Shortfall|Loan|Penalty/.test(e.type)?'bg-rose-100 text-rose-700':'bg-emerald-100 text-emerald-700')}>{/Recovery|Shortfall|Loan|Penalty/.test(e.type)?'Party owes FT':'FT owes Party'}</span></td>
+                <td className="text-right tabular-nums">{INR(e.amt)}</td>
+                <td className="text-xs">{e.ref}</td>
+                <td className="text-xs text-slate-500">{e.note}</td>
+              </tr>
+            ))}
+            {(w.events||[]).length===0 && <tr><td colSpan={6}><Empty msg="No wallet events"/></td></tr>}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card title="Trip-wise Ledger" right={<div className="flex gap-2"><Button kind="ghost" size="sm">Filter</Button><Button kind="ghost" size="sm">Download CSV</Button></div>}>
+        <table className="min-w-full text-sm">
+          <thead className="text-slate-500 text-xs">
+            <tr className="text-left">
+              <th className="py-2"><input type="checkbox"/></th>
+              <th>Trip</th><th>Route</th><th>Status</th><th>POD</th>
+              <th className="text-right">{kind==='fo'?'Freight (FO)':'Freight (LSP)'}</th>
+              <th className="text-right">Charges</th><th className="text-right">Deductions</th>
+              <th className="text-right">{kind==='fo'?'Net Payable':'Net Receivable'}</th>
+              <th className="text-right">{kind==='fo'?'Paid':'Received'}</th>
+              <th className="text-right">Due</th>
+            </tr>
+          </thead>
+          <tbody>
+            {partyTrips.map(t=>{
+              const tot = tripTotals(t);
+              const f = kind==='fo'?t.fo.freight:t.lsp.freight;
+              const ch = kind==='fo'?tot.foCharges:tot.lspCharges;
+              const dd = kind==='fo'?tot.foDed:tot.lspDed;
+              const nt = kind==='fo'?tot.foNet:tot.lspNet;
+              const pd = kind==='fo'?tot.foPaid:tot.lspRecvd;
+              const du = kind==='fo'?tot.foDue:tot.lspDue;
+              return (
+                <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50/50">
+                  <td className="py-2"><input type="checkbox"/></td>
+                  <td><button onClick={()=>setRoute({name:'trip', id:t.id})} className="text-brand-700 font-semibold hover:underline">{t.id}</button></td>
+                  <td>{t.route}</td>
+                  <td><StatusChip status={t.status}/></td>
+                  <td><StatusChip status={t.podStatus}/></td>
+                  <td className="text-right tabular-nums">{INR(f)}</td>
+                  <td className="text-right tabular-nums">{INR(ch)}</td>
+                  <td className="text-right tabular-nums">{INR(dd)}</td>
+                  <td className="text-right tabular-nums font-semibold">{INR(nt)}</td>
+                  <td className="text-right tabular-nums">{INR(pd)}</td>
+                  <td className={cls('text-right tabular-nums', du>0?'text-rose-700':'text-emerald-700')}>{INR(du)}</td>
+                </tr>
+              );
+            })}
+            {partyTrips.length===0 && <tr><td colSpan={11}><Empty msg="No trips"/></td></tr>}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+function LSPListPage(){
+  const { trips, wallets, setRoute } = useApp();
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-xl font-semibold">LSPs</h1><p className="text-sm text-slate-500">PAN-level customer with branch sub-accounts</p></div>
+        <Button kind="outline">Download LSP Master</Button>
+      </div>
+      <Card padded={false}>
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-slate-600">
+            <tr className="text-left">
+              <th className="px-4 py-2 font-medium">LSP</th>
+              <th className="px-4 py-2 font-medium">PAN</th>
+              <th className="px-4 py-2 font-medium">Branches</th>
+              <th className="px-4 py-2 font-medium">Credit Days</th>
+              <th className="px-4 py-2 font-medium text-right">Trips</th>
+              <th className="px-4 py-2 font-medium text-right">FT Owes</th>
+              <th className="px-4 py-2 font-medium text-right">LSP Owes</th>
+              <th className="px-4 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {PARTIES.lsp.map(l => {
+              const w = wallets[l.id]||{ftOwes:0,partyOwes:0};
+              const count = trips.filter(t=>t.lspId===l.id).length;
+              return (
+                <tr key={l.id} className="border-t border-slate-100 hover:bg-slate-50/50">
+                  <td className="px-4 py-2"><button onClick={()=>setRoute({name:'lsp-detail',id:l.id})} className="font-semibold text-brand-700 hover:underline">{l.name}</button><div className="text-[11px] text-slate-400">{l.id}</div></td>
+                  <td className="px-4 py-2 text-xs">{l.pan}</td>
+                  <td className="px-4 py-2 text-xs">{l.branches.map(b=>b.code).join(', ')}</td>
+                  <td className="px-4 py-2">{l.creditDays}d</td>
+                  <td className="px-4 py-2 text-right">{count}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-emerald-700">{INR(w.ftOwes)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-rose-700">{INR(w.partyOwes)}</td>
+                  <td className="px-4 py-2 text-right"><Button size="sm" kind="ghost" onClick={()=>setRoute({name:'lsp-detail', id:l.id})}>Open →</Button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGE: FT TENANT LEDGER
+   ============================================================ */
+
+function FTLedgerPage(){
+  const { trips, wallets } = useApp();
+  let totPay=0,totRecv=0,totPaid=0,totRecvd=0,totMargin=0;
+  trips.forEach(t=>{ const x=tripTotals(t); totPay+=x.foNet; totRecv+=x.lspNet; totPaid+=x.foPaid; totRecvd+=x.lspRecvd; totMargin+=x.ftExpMargin; });
+
+  const foExposureOwed = Object.entries(wallets).filter(([k])=>k.startsWith('FO')).reduce((s,[,w])=>s+w.partyOwes,0);
+  const lspExposureOwed = Object.entries(wallets).filter(([k])=>k.startsWith('LSP')).reduce((s,[,w])=>s+w.partyOwes,0);
+
+  return (
+    <div className="space-y-4">
+      <div><h1 className="text-xl font-semibold">Freight Tiger — Tenant Ledger</h1><p className="text-sm text-slate-500">Marketplace-wide payable, receivable and exposure</p></div>
+      <div className="grid grid-cols-4 gap-3">
+        <SummaryCard label="Gross Payable (FO)" value={INR(totPay)} sub={`Paid ${INR(totPaid)} • Due ${INR(totPay-totPaid)}`} tone="rose"/>
+        <SummaryCard label="Gross Receivable (LSP)" value={INR(totRecv)} sub={`Received ${INR(totRecvd)} • Due ${INR(totRecv-totRecvd)}`} tone="emerald"/>
+        <SummaryCard label="Expected Margin" value={INR(totMargin)} sub={`Across ${trips.length} trips`} tone="brand"/>
+        <SummaryCard label="Recovery Exposure" value={INR(foExposureOwed+lspExposureOwed)} sub={`FO ${INR(foExposureOwed)} • LSP ${INR(lspExposureOwed)}`} tone="slate"/>
+      </div>
+
+      <Card title="Trip-wise Settlement">
+        <table className="min-w-full text-sm">
+          <thead className="text-slate-500 text-xs"><tr className="text-left">
+            <th className="py-2">Trip</th><th>Route</th><th>Status</th>
+            <th className="text-right">Paid (FO)</th><th className="text-right">Recvd (LSP)</th>
+            <th>FO Settled</th><th>LSP Settled</th><th className="text-right">Margin</th>
+          </tr></thead>
+          <tbody>
+            {trips.map(t=>{
+              const x=tripTotals(t);
+              return (
+                <tr key={t.id} className="border-t border-slate-100">
+                  <td className="py-2 font-semibold text-brand-700">{t.id}</td>
+                  <td>{t.route}</td>
+                  <td><StatusChip status={t.status}/></td>
+                  <td className="text-right tabular-nums">{INR(x.foPaid)}</td>
+                  <td className="text-right tabular-nums">{INR(x.lspRecvd)}</td>
+                  <td><StatusChip status={x.foDue<=0?'SETTLED':'IN-TRANSIT'}/></td>
+                  <td><StatusChip status={x.lspDue<=0?'SETTLED':'IN-TRANSIT'}/></td>
+                  <td className="text-right tabular-nums font-semibold">{INR(x.ftRealMargin)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGE: WALLET & RECOVERIES
+   ============================================================ */
+
+function WalletPage(){
+  const { wallets, setRoute } = useApp();
+  const rows = Object.entries(wallets).map(([id,w])=>{
+    const isFO = id.startsWith('FO');
+    const party = (isFO?PARTIES.fo:PARTIES.lsp).find(p=>p.id===id);
+    return { id, isFO, name: party?.name, ...w };
+  });
+  return (
+    <div className="space-y-4">
+      <div><h1 className="text-xl font-semibold">Wallet & Recoveries</h1><p className="text-sm text-slate-500">Two-bucket wallet model across all FO and LSP parties</p></div>
+      <Card padded={false}>
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-slate-600">
+            <tr className="text-left">
+              <th className="px-4 py-2 font-medium">Party</th>
+              <th className="px-4 py-2 font-medium">Type</th>
+              <th className="px-4 py-2 font-medium text-right">FT Owes Party</th>
+              <th className="px-4 py-2 font-medium text-right">Party Owes FT</th>
+              <th className="px-4 py-2 font-medium text-right">Net Exposure</th>
+              <th className="px-4 py-2 font-medium">Last Event</th>
+              <th className="px-4 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.id} className="border-t border-slate-100">
+                <td className="px-4 py-2"><button className="font-semibold text-brand-700 hover:underline" onClick={()=>setRoute({name:r.isFO?'fo-detail':'lsp-detail',id:r.id})}>{r.name}</button><div className="text-[11px] text-slate-400">{r.id}</div></td>
+                <td className="px-4 py-2">{r.isFO?'FO':'LSP'}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-emerald-700">{INR(r.ftOwes)}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-rose-700">{INR(r.partyOwes)}</td>
+                <td className="px-4 py-2 text-right tabular-nums font-semibold">{INR(r.ftOwes-r.partyOwes)}</td>
+                <td className="px-4 py-2 text-xs text-slate-500">{r.events?.[0]?.note||'—'}</td>
+                <td className="px-4 py-2 text-right"><Button size="sm" kind="ghost" onClick={()=>setRoute({name:r.isFO?'fo-detail':'lsp-detail',id:r.id})}>Open →</Button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGE: DOCUMENTS LIBRARY
+   ============================================================ */
+
+function DocumentsPage(){
+  const { trips, showToast } = useApp();
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-xl font-semibold">Documents</h1><p className="text-sm text-slate-500">Bill of Supply, Credit Note, Loading Memo</p></div>
+        <Button onClick={()=>showToast('Bulk generation queued (mock)')}>Bulk Generate (eligible)</Button>
+      </div>
+      <Card padded={false}>
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-slate-600"><tr className="text-left">
+            <th className="px-4 py-2 font-medium">Trip</th>
+            <th className="px-4 py-2 font-medium">Route</th>
+            <th className="px-4 py-2 font-medium">Loading Memo</th>
+            <th className="px-4 py-2 font-medium">Bill of Supply (LSP)</th>
+            <th className="px-4 py-2 font-medium">Bill of Supply (FO)</th>
+            <th className="px-4 py-2 font-medium">Credit Note</th>
+          </tr></thead>
+          <tbody>
+            {trips.map(t=>(
+              <tr key={t.id} className="border-t border-slate-100">
+                <td className="px-4 py-2 font-semibold text-brand-700">{t.id}</td>
+                <td className="px-4 py-2">{t.route}</td>
+                <td className="px-4 py-2">{t.status!=='CANCELLED'?<a className="text-brand-700 hover:underline cursor-pointer" onClick={()=>showToast('Loading Memo opened')}>View</a>:'—'}</td>
+                <td className="px-4 py-2">{['UNLOADED','SETTLED'].includes(t.status)?<a className="text-brand-700 hover:underline cursor-pointer" onClick={()=>showToast('BoS opened')}>View</a>:<button className="text-xs text-slate-500" onClick={()=>showToast('Eligibility check failed — POD not approved')}>Pending eligibility</button>}</td>
+                <td className="px-4 py-2">{t.status==='SETTLED'?<a className="text-brand-700 hover:underline cursor-pointer" onClick={()=>showToast('FO BoS opened')}>View</a>:'—'}</td>
+                <td className="px-4 py-2">{t.status==='CANCELLED'?<a className="text-brand-700 hover:underline cursor-pointer" onClick={()=>showToast('CN opened')}>View CN</a>:'—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGE: REPORTS
+   ============================================================ */
+
+function ReportsPage(){
+  return (
+    <div className="space-y-4">
+      <h1 className="text-xl font-semibold">Reports</h1>
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          {t:'Payables Report (FO)', d:'Trip-wise payable, paid, balance, aging by FO',},
+          {t:'Receivables Report (LSP)', d:'Receivable, received, outstanding, aging by LSP & branch'},
+          {t:'TDS Report', d:'Trip-wise & period-wise TDS deduction summary'},
+          {t:'Aging Report', d:'0–30 / 31–60 / 61–90 / 90+ buckets'},
+          {t:'Cancelled Trips', d:'Cancelled trips with wallet credits applied'},
+          {t:'Bulk Approval Dashboard', d:'Receipts pending classification & allocation'},
+        ].map((r,i)=>(
+          <Card key={i} title={r.t} right={<Button kind="ghost" size="sm">Open →</Button>}>
+            <div className="text-sm text-slate-600">{r.d}</div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGE: ADMIN — masters, rules, templates, RBAC, sections
+   ============================================================ */
+
+function AdminPage(){
+  const [tab, setTab] = useState('components');
+  const tabs = [
+    { id:'components', label:'Component Master' },
+    { id:'rules',      label:'Rules Engine' },
+    { id:'templates',  label:'Document Templates' },
+    { id:'sections',   label:'Role × Section Visibility' },
+    { id:'rbac',       label:'RBAC & Maker-Checker' },
+    { id:'integration',label:'Zoho / Razorpay' },
+  ];
+  return (
+    <div className="space-y-4">
+      <div><h1 className="text-xl font-semibold">Admin</h1><p className="text-sm text-slate-500">Configure masters, rules and access</p></div>
+      <div className="flex gap-1 border-b border-slate-200">
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} className={cls('px-4 py-2 text-sm border-b-2 -mb-px', tab===t.id?'border-brand-600 text-brand-700 font-semibold':'border-transparent text-slate-600 hover:text-slate-900')}>{t.label}</button>
+        ))}
+      </div>
+      {tab==='components' && <ComponentMasterTab/>}
+      {tab==='rules' && <RulesEngineTab/>}
+      {tab==='templates' && <TemplatesTab/>}
+      {tab==='sections' && <SectionsTab/>}
+      {tab==='rbac' && <RBACTab/>}
+      {tab==='integration' && <IntegrationTab/>}
+    </div>
+  );
+}
+
+function ComponentMasterTab(){
+  const { components, setComponents, showToast } = useApp();
+  const [editing, setEditing] = useState(null);
+  function save(){
+    setComponents(cs => cs.map(c => c.id===editing.id?editing:c));
+    setEditing(null);
+    showToast('Component updated');
+  }
+  return (
+    <Card padded={false}>
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50 text-slate-600"><tr className="text-left">
+          <th className="px-4 py-2 font-medium">Component</th><th>Kind</th><th>Side</th><th>Entry</th>
+          <th className="text-right">Max Abs</th><th className="text-right">Max %</th><th>Approval Rule</th><th>Auto</th><th></th>
+        </tr></thead>
+        <tbody>
+          {components.map(c=>(
+            <tr key={c.id} className="border-t border-slate-100">
+              <td className="px-4 py-2 font-medium">{c.name}</td>
+              <td>{c.kind}</td><td>{c.side}</td><td>{c.entry}</td>
+              <td className="text-right tabular-nums">{INR(c.maxAbs)}</td>
+              <td className="text-right tabular-nums">{c.maxPct}%</td>
+              <td className="font-mono text-xs">{c.approvalRule}</td>
+              <td>{c.isAuto?'Yes':'No'}</td>
+              <td className="text-right pr-4"><Button size="sm" kind="ghost" onClick={()=>setEditing({...c})}>Edit</Button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Modal open={!!editing} onClose={()=>setEditing(null)} title="Edit Component" footer={<><Button kind="outline" onClick={()=>setEditing(null)}>Cancel</Button><Button onClick={save}>Save</Button></>}>
+        {editing && (
+          <div className="space-y-3">
+            <Input label="Name" value={editing.name} onChange={e=>setEditing({...editing,name:e.target.value})}/>
+            <div className="grid grid-cols-2 gap-3">
+              <Select label="Kind" value={editing.kind} onChange={e=>setEditing({...editing,kind:e.target.value})}>{['Charge','Deduction','Earning'].map(o=><option key={o}>{o}</option>)}</Select>
+              <Select label="Side" value={editing.side} onChange={e=>setEditing({...editing,side:e.target.value})}>{['Both','Payable','Receivable','FT'].map(o=><option key={o}>{o}</option>)}</Select>
+              <Select label="Entry" value={editing.entry} onChange={e=>setEditing({...editing,entry:e.target.value})}>{['Manual','Auto','Both'].map(o=><option key={o}>{o}</option>)}</Select>
+              <Input label="Approval Rule" value={editing.approvalRule} onChange={e=>setEditing({...editing,approvalRule:e.target.value})} placeholder="always | never | >1000"/>
+              <Input label="Max Abs" type="number" value={editing.maxAbs} onChange={e=>setEditing({...editing,maxAbs:Number(e.target.value)})}/>
+              <Input label="Max %" type="number" value={editing.maxPct} onChange={e=>setEditing({...editing,maxPct:Number(e.target.value)})}/>
+            </div>
+            <Toggle checked={editing.isAuto} onChange={v=>setEditing({...editing,isAuto:v})} label="Auto-computed"/>
+          </div>
+        )}
+      </Modal>
+    </Card>
+  );
+}
+
+function RulesEngineTab(){
+  const { rules, setRules, showToast } = useApp();
+  function updateSlab(i, field, val){
+    const next = { ...rules, commission: rules.commission.map((s,idx)=>idx===i?{...s,[field]:Number(val)}:s) };
+    setRules(next);
+  }
+  function updateTDS(field, val){ setRules({ ...rules, tds: { ...rules.tds, [field]: Number(val) }}); }
+  function updatePOD(field, val){ setRules({ ...rules, podPenalty: { ...rules.podPenalty, [field]: Number(val) }}); }
+  function toggleGating(id){ setRules({ ...rules, gating: rules.gating.map(g=>g.id===id?{...g,enabled:!g.enabled}:g) }); }
+
+  return (
+    <div className="space-y-4">
+      <Card title="Commission Slabs (LSP freight → fee)" right={<Button size="sm" kind="soft" onClick={()=>{setRules({...rules,commission:[...rules.commission,{upto:999999,fee:0}]});}}>+ Slab</Button>}>
+        <table className="text-sm">
+          <thead className="text-slate-500 text-xs"><tr className="text-left"><th className="py-2 pr-6">Freight ≤</th><th>Fee</th></tr></thead>
+          <tbody>
+            {rules.commission.map((s,i)=>(
+              <tr key={i} className="border-t border-slate-100">
+                <td className="py-2 pr-6"><Input className="w-40" type="number" value={s.upto} onChange={e=>updateSlab(i,'upto',e.target.value)}/></td>
+                <td><Input className="w-32" type="number" value={s.fee} onChange={e=>updateSlab(i,'fee',e.target.value)}/></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card title="TDS Rules">
+        <div className="grid grid-cols-3 gap-4">
+          <Input label="If exemption" type="number" value={rules.tds.exemption} onChange={e=>updateTDS('exemption',e.target.value)}/>
+          <Input label="If PAN missing" type="number" value={rules.tds.panMissing} onChange={e=>updateTDS('panMissing',e.target.value)}/>
+          <Input label="If PAN valid" type="number" value={rules.tds.panValid} onChange={e=>updateTDS('panValid',e.target.value)}/>
+        </div>
+      </Card>
+
+      <Card title="POD Late Penalty">
+        <div className="grid grid-cols-3 gap-4">
+          <Input label="Grace days" type="number" value={rules.podPenalty.gracedays} onChange={e=>updatePOD('gracedays',e.target.value)}/>
+          <Input label="₹ per day after grace" type="number" value={rules.podPenalty.perDay} onChange={e=>updatePOD('perDay',e.target.value)}/>
+          <Input label="Forfeit-all after (days)" type="number" value={rules.podPenalty.fullForfeitAfterDays} onChange={e=>updatePOD('fullForfeitAfterDays',e.target.value)}/>
+        </div>
+      </Card>
+
+      <Card title="Payment Gating Rules">
+        <div className="space-y-2">
+          {rules.gating.map(g=>(
+            <div key={g.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50">
+              <div className="text-sm text-slate-700">{g.name}</div>
+              <Toggle checked={g.enabled} onChange={()=>toggleGating(g.id)}/>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function TemplatesTab(){
+  const [templates] = useState([
+    { id:'tpl1', name:'Bill of Supply (Default)', side:'LSP', version:'v3', updatedAt:'2026-04-12' },
+    { id:'tpl2', name:'Loading Memo (Default)',   side:'LSP', version:'v2', updatedAt:'2026-03-30' },
+    { id:'tpl3', name:'FO Payable Voucher',       side:'FO',  version:'v1', updatedAt:'2026-02-18' },
+    { id:'tpl4', name:'Credit Note (Cancellation)',side:'Both',version:'v1', updatedAt:'2026-01-09' },
+  ]);
+  return (
+    <Card padded={false}>
+      <div className="p-4 flex justify-end"><Button>+ New Template</Button></div>
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50 text-slate-600"><tr className="text-left">
+          <th className="px-4 py-2 font-medium">Template</th><th>Side</th><th>Version</th><th>Updated</th><th></th>
+        </tr></thead>
+        <tbody>
+          {templates.map(t=>(
+            <tr key={t.id} className="border-t border-slate-100">
+              <td className="px-4 py-2 font-medium">{t.name}</td>
+              <td>{t.side}</td><td>{t.version}</td><td className="text-slate-500">{t.updatedAt}</td>
+              <td className="text-right pr-4"><Button size="sm" kind="ghost">Edit</Button> <Button size="sm" kind="ghost">Preview</Button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+function SectionsTab(){
+  const { sectionsByRole, setSectionsByRole } = useApp();
+  const allSections = [
+    { id:'tracking', label:'Trip Tracking' },
+    { id:'fo',       label:'FO Section' },
+    { id:'lsp',      label:'LSP Section' },
+    { id:'ft',       label:'FT Earnings' },
+    { id:'pod',      label:'POD' },
+    { id:'docs',     label:'Documents' },
+    { id:'comments', label:'Comments' },
+    { id:'audit',    label:'Audit Log' },
+    { id:'wallet',   label:'Wallet' },
+  ];
+  function toggle(role, sec){
+    setSectionsByRole(s => ({ ...s, [role]: { ...s[role], [sec]: !s[role][sec] }}));
+  }
+  return (
+    <Card title="Configure which sections are visible to each role on the Trip Detail page" >
+      <table className="min-w-full text-sm">
+        <thead className="text-slate-500 text-xs"><tr className="text-left"><th className="py-2">Section</th>{ROLES.map(r=><th key={r}>{r}</th>)}</tr></thead>
+        <tbody>
+          {allSections.map(s=>(
+            <tr key={s.id} className="border-t border-slate-100">
+              <td className="py-2 font-medium">{s.label}</td>
+              {ROLES.map(r=>(
+                <td key={r}><Toggle checked={!!sectionsByRole[r][s.id]} onChange={()=>toggle(r,s.id)}/></td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="text-xs text-slate-500 mt-3">Tip: switch the role in the top bar — sections you turned off will disappear on Trip pages.</div>
+    </Card>
+  );
+}
+
+function RBACTab(){
+  const matrix = [
+    { action:'Add Charge / Deduction', Admin:true, Finance:true, Ops:true, 'POD Audit':false, Viewer:false },
+    { action:'Approve Charge (above threshold)', Admin:true, Finance:true, Ops:false, 'POD Audit':false, Viewer:false },
+    { action:'Execute Razorpay Payout', Admin:true, Finance:true, Ops:false, 'POD Audit':false, Viewer:false },
+    { action:'Record Offline Receipt', Admin:true, Finance:true, Ops:false, 'POD Audit':false, Viewer:false },
+    { action:'Generate Bill of Supply', Admin:true, Finance:true, Ops:false, 'POD Audit':true,  Viewer:false },
+    { action:'Generate Credit Note',     Admin:true, Finance:true, Ops:false, 'POD Audit':false, Viewer:false },
+    { action:'Upload POD',               Admin:true, Finance:false,Ops:true,  'POD Audit':true,  Viewer:false },
+    { action:'Approve POD',              Admin:true, Finance:false,Ops:false, 'POD Audit':true,  Viewer:false },
+    { action:'Cancel Trip',              Admin:true, Finance:true, Ops:false, 'POD Audit':false, Viewer:false },
+    { action:'View Sensitive Financials',Admin:true, Finance:true, Ops:false, 'POD Audit':false, Viewer:true  },
+  ];
+  return (
+    <Card title="Role × Action permissions (sample matrix)">
+      <table className="min-w-full text-sm">
+        <thead className="text-slate-500 text-xs"><tr className="text-left"><th className="py-2">Action</th>{ROLES.map(r=><th key={r}>{r}</th>)}</tr></thead>
+        <tbody>
+          {matrix.map((r,i)=>(
+            <tr key={i} className="border-t border-slate-100">
+              <td className="py-2 font-medium">{r.action}</td>
+              {ROLES.map(role=><td key={role}>{r[role]?'✅':'—'}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="text-xs text-slate-500 mt-3">Maker-checker: all approvals require a different actor than the maker. Audited via the immutable ledger.</div>
+    </Card>
+  );
+}
+
+function IntegrationTab(){
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Card title="Zoho Books">
+        <div className="text-sm space-y-2 text-slate-700">
+          <div className="flex justify-between"><span>Status</span><StatusChip status="Approved"/></div>
+          <div className="flex justify-between"><span>Org</span><span className="font-mono text-xs">FT-MARKETPLACE</span></div>
+          <div className="flex justify-between"><span>FO ↔ Vendor mapping</span><span>240 mapped</span></div>
+          <div className="flex justify-between"><span>LSP ↔ Customer mapping</span><span>42 PANs / 87 branches</span></div>
+          <div className="flex justify-between"><span>Posting mode</span><span>Async (event bus)</span></div>
+          <div className="flex justify-between"><span>API calls / 30d</span><span>21,403</span></div>
+        </div>
+      </Card>
+      <Card title="Razorpay X">
+        <div className="text-sm space-y-2 text-slate-700">
+          <div className="flex justify-between"><span>Status</span><StatusChip status="Approved"/></div>
+          <div className="flex justify-between"><span>Account</span><span className="font-mono text-xs">acc_FT_RZPX_01</span></div>
+          <div className="flex justify-between"><span>Balance</span><span>{INR(15832000)}</span></div>
+          <div className="flex justify-between"><span>Today's payouts</span><span>{INR(2210000)}</span></div>
+          <div className="flex justify-between"><span>UTR sync</span><span>Webhook + nightly</span></div>
+        </div>
+      </Card>
+      <Card title="Bank Receipts (Receivable Ingestion)">
+        <div className="text-sm text-slate-600">Upload bank statement or connect API; receipts land as <span className="font-mono">Unallocated</span> and need matching.</div>
+        <div className="mt-3 flex gap-2"><Button kind="outline">Upload CSV</Button><Button>Connect Bank API</Button></div>
+      </Card>
+      <Card title="Audit & Compliance">
+        <div className="text-sm space-y-1 text-slate-700">
+          <div>• Append-only ledger</div>
+          <div>• Maker-checker on financial actions</div>
+          <div>• As-of date queries on Zoho-backed APIs</div>
+          <div>• TDS reports period-locked at month-end</div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ============================================================
+   ROOT
+   ============================================================ */
+
+function Page(){
+  const { route } = useApp();
+  switch (route.name){
+    case 'payments': return <PaymentsPage/>;
+    case 'trip':     return <TripDetail id={route.id}/>;
+    case 'fo':       return <FOListPage/>;
+    case 'fo-detail':return <PartyLedger kind="fo" id={route.id}/>;
+    case 'lsp':      return <LSPListPage/>;
+    case 'lsp-detail':return <PartyLedger kind="lsp" id={route.id}/>;
+    case 'ft':       return <FTLedgerPage/>;
+    case 'wallet':   return <WalletPage/>;
+    case 'documents':return <DocumentsPage/>;
+    case 'reports':  return <ReportsPage/>;
+    case 'admin':    return <AdminPage/>;
+    default:         return <PaymentsPage/>;
+  }
+}
+
+function App(){
+  return (
+    <AppProvider>
+      <div className="flex h-full">
+        <Sidebar/>
+        <main className="flex-1 flex flex-col min-w-0">
+          <Topbar/>
+          <div className="flex-1 overflow-y-auto p-6">
+            <Page/>
+          </div>
+        </main>
+      </div>
+      <Toast/>
+    </AppProvider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
