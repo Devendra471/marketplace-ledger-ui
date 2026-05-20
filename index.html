@@ -1313,8 +1313,7 @@ function FOListPage(){
               <th className="px-4 py-2 font-medium">City</th>
               <th className="px-4 py-2 font-medium">TDS</th>
               <th className="px-4 py-2 font-medium text-right">Trips</th>
-              <th className="px-4 py-2 font-medium text-right">FT Owes</th>
-              <th className="px-4 py-2 font-medium text-right">FO Owes</th>
+              <th className="px-4 py-2 font-medium text-right">FO Owes FT</th>
               <th className="px-4 py-2"></th>
             </tr>
           </thead>
@@ -1329,7 +1328,6 @@ function FOListPage(){
                   <td className="px-4 py-2">{fo.city}</td>
                   <td className="px-4 py-2">{fo.hasExemption?'Exempt':`${fo.tdsRate}%`}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{count}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-emerald-700">{INR(w.ftOwes)}</td>
                   <td className="px-4 py-2 text-right tabular-nums text-rose-700">{INR(w.partyOwes)}</td>
                   <td className="px-4 py-2 text-right"><Button size="sm" kind="ghost" onClick={()=>setRoute({name:'fo-detail', id:fo.id})}>Open →</Button></td>
                 </tr>
@@ -1349,19 +1347,71 @@ function PartyLedger({ kind, id }){
   const party = list.find(p=>p.id===id);
   if (!party) return <div>Party not found.</div>;
   const w = wallets[id] || { ftOwes:0, partyOwes:0, events:[] };
+
+  const [filter, setFilter] = useState('all'); // 'all'|'settled'|'audited-pending'|'unaudited-pending'|'owes-ft'|'ft-owes'
+
   const partyTrips = trips.filter(t => kind==='fo' ? t.foId===id : t.lspId===id);
 
-  let totalNet = 0, totalSettled = 0, podPending = 0, podSubmitted = 0, auditedPending = 0, unauditedPending = 0;
-  partyTrips.forEach(t => {
+  // ----- per-trip classification helpers -----
+  function classify(t){
     const tot = tripTotals(t);
     const net = kind==='fo' ? tot.foNet : tot.lspNet;
     const paid = kind==='fo' ? tot.foPaid : tot.lspRecvd;
-    totalNet += net; totalSettled += paid;
-    if (t.podStatus==='Pending') podPending++;
-    if (t.podStatus==='Submitted') podSubmitted++;
-    if (t.podStatus==='Approved' && (kind==='fo'?tot.foDue:tot.lspDue) > 0) auditedPending += (kind==='fo'?tot.foDue:tot.lspDue);
-    if ((t.podStatus==='Pending'||t.podStatus==='Submitted') && (kind==='fo'?tot.foDue:tot.lspDue) > 0) unauditedPending += (kind==='fo'?tot.foDue:tot.lspDue);
+    const due = kind==='fo' ? tot.foDue : tot.lspDue;
+    const podApproved = t.podStatus==='Approved';
+    const isSettled = t.status==='SETTLED' && due<=0 && podApproved;
+    const isOverpaid = paid > net && t.status!=='CANCELLED'; // overpayment
+    const isCancelledWithPayment = t.status==='CANCELLED' && paid > 0; // recovery scenario
+    return {
+      tot, net, paid, due, podApproved, isSettled, isOverpaid, isCancelledWithPayment,
+      auditedPending: podApproved && due > 0 && t.status!=='CANCELLED',
+      unauditedPending: !podApproved && due > 0 && t.status!=='CANCELLED',
+      partyOwesFT: isOverpaid || isCancelledWithPayment,
+    };
+  }
+
+  let totalNet = 0, totalSettledAmt = 0;
+  let settledCount = 0, auditedPendingAmt = 0, auditedPendingCount = 0;
+  let unauditedPendingAmt = 0, unauditedPendingCount = 0;
+  let owesFTAmt = 0, owesFTCount = 0;
+  let ftOwesAmt = 0, ftOwesCount = 0;
+  partyTrips.forEach(t => {
+    const c = classify(t);
+    totalNet += c.net;
+    if (c.isSettled) { totalSettledAmt += c.net; settledCount++; }
+    if (c.auditedPending)   { auditedPendingAmt   += c.due; auditedPendingCount++; }
+    if (c.unauditedPending) { unauditedPendingAmt += c.due; unauditedPendingCount++; }
+    if (c.partyOwesFT) {
+      const over = Math.max(0, c.paid - c.net);
+      owesFTAmt += over;
+      owesFTCount++;
+    }
   });
+  // For LSP only: FT-owes-LSP can exist (LSP overpaid us)
+  if (kind==='lsp') { ftOwesAmt = w.ftOwes||0; ftOwesCount = (w.events||[]).filter(e=>!/Recovery|Shortfall|Loan|Penalty/.test(e.type)).length; }
+
+  // ----- filter trips for the table -----
+  function matchesFilter(t){
+    const c = classify(t);
+    switch(filter){
+      case 'settled': return c.isSettled;
+      case 'audited-pending': return c.auditedPending;
+      case 'unaudited-pending': return c.unauditedPending;
+      case 'owes-ft': return c.partyOwesFT;
+      case 'ft-owes': return kind==='lsp' && c.paid > c.net; // mock heuristic
+      default: return true;
+    }
+  }
+  const visibleTrips = partyTrips.filter(matchesFilter);
+
+  const FILTER_LABELS = {
+    all:'All trips',
+    settled:'Settled',
+    'audited-pending':'Audited & Payment Pending',
+    'unaudited-pending':'Awaiting POD / Audit',
+    'owes-ft': kind==='fo'?'FO Owes FT (Overpaid / Cancelled)':'LSP Owes FT (Shortfall / Cancelled)',
+    'ft-owes':'FT Owes LSP (Overpaid by LSP)',
+  };
 
   return (
     <div className="space-y-4">
@@ -1374,44 +1424,99 @@ function PartyLedger({ kind, id }){
         <div className="text-sm text-slate-500 mt-1">PAN {party.pan} {party.gst&&`• GST ${party.gst}`}{kind==='fo'&&` • TDS ${party.hasExemption?'Exempt':party.tdsRate+'%'}`}{kind==='lsp'&&` • Credit ${party.creditDays}d`}</div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3">
-        <SummaryCard label="Trip Count" value={partyTrips.length} sub={`POD pending ${podPending} • submitted ${podSubmitted}`} tone="slate"/>
-        <SummaryCard label={kind==='fo'?'Total Payable':'Total Receivable'} value={INR(totalNet)} sub={`Settled ${INR(totalSettled)}`} tone="brand"/>
-        <SummaryCard label="FT Owes Party" value={INR(w.ftOwes)} sub="Refund / credit wallet" tone="emerald"/>
-        <SummaryCard label="Party Owes FT" value={INR(w.partyOwes)} sub="Recovery wallet" tone="rose"/>
+      {/* ── Headline row: 3 KPIs ── */}
+      <div className="grid grid-cols-3 gap-3">
+        <ClickableStat
+          active={filter==='all'} onClick={()=>setFilter('all')}
+          label={kind==='fo'?'Total Payable':'Total Receivable'}
+          value={INR(totalNet)}
+          sub={`${partyTrips.length} trips • click to view all`}
+          tone="brand"
+        />
+        <ClickableStat
+          active={filter==='settled'} onClick={()=>setFilter('settled')}
+          label="Settled" value={INR(totalSettledAmt)}
+          sub={`${settledCount} trip${settledCount===1?'':'s'} • POD approved + balance paid`}
+          tone="emerald"
+        />
+        <ClickableStat
+          active={filter==='owes-ft'} onClick={()=>setFilter('owes-ft')}
+          label={kind==='fo'?'FO Owes FT':'LSP Owes FT'}
+          value={INR(owesFTAmt + (w.partyOwes||0))}
+          sub={kind==='fo'?'Overpayment / cancelled advance — recover from next trip':'Shortfall / cancelled receipt'}
+          tone="rose"
+        />
       </div>
 
+      {/* ── Action buckets: who is blocking ── */}
       <div className="grid grid-cols-2 gap-3">
-        <Card title="Audited & Payment Pending" >
-          <div className="text-2xl font-semibold tabular-nums">{INR(auditedPending)}</div>
-          <div className="text-xs text-slate-500 mt-1">POD approved but not yet settled</div>
-        </Card>
-        <Card title="Unaudited & Payment Pending">
-          <div className="text-2xl font-semibold tabular-nums">{INR(unauditedPending)}</div>
-          <div className="text-xs text-slate-500 mt-1">POD not yet approved and not yet settled</div>
-        </Card>
+        <ClickableStat
+          active={filter==='unaudited-pending'} onClick={()=>setFilter('unaudited-pending')}
+          icon="⏳" label="Awaiting POD / Audit"
+          value={INR(unauditedPendingAmt)}
+          sub={`${unauditedPendingCount} trips • Ops + POD Audit own next step`}
+          tone="amber"
+        />
+        <ClickableStat
+          active={filter==='audited-pending'} onClick={()=>setFilter('audited-pending')}
+          icon="💰" label="Audited & Payment Pending"
+          value={INR(auditedPendingAmt)}
+          sub={`${auditedPendingCount} trips • POD approved, Finance to release ${kind==='fo'?'balance payout':'collection'}`}
+          tone="indigo"
+        />
       </div>
 
-      <Card title="Wallet — Two Bucket Ledger" right={<div className="text-xs text-slate-500">Net exposure: <span className="font-semibold text-slate-800">{INR((w.ftOwes||0)-(w.partyOwes||0))}</span></div>}>
+      {/* ── Wallet ── only FO Owes FT for FOs; both directions for LSPs ── */}
+      <Card title={kind==='fo'?'Wallet — Recoverable from future payouts':'Wallet — Credits & Recoveries'}
+        right={kind==='fo'
+          ? <div className="text-xs text-slate-500">Recoverable: <span className="font-semibold text-rose-700">{INR(w.partyOwes||0)}</span></div>
+          : <div className="text-xs text-slate-500">Net exposure: <span className="font-semibold text-slate-800">{INR((w.ftOwes||0)-(w.partyOwes||0))}</span></div>
+        }>
+        {kind==='fo' && (
+          <div className="text-xs text-slate-500 mb-3 bg-amber-50 border border-amber-100 rounded-lg p-3">
+            FO doesn't pay FT directly. Any "FO Owes FT" amount is auto-netted from this FO's next trip payout (advance or balance).
+          </div>
+        )}
         <table className="min-w-full text-sm">
-          <thead className="text-slate-500 text-xs"><tr className="text-left"><th className="py-2">At</th><th>Type</th><th>Bucket</th><th className="text-right">Amount</th><th>Ref</th><th>Note</th></tr></thead>
+          <thead className="text-slate-500 text-xs"><tr className="text-left">
+            <th className="py-2">At</th><th>Type</th><th>Direction</th><th className="text-right">Amount</th><th>Source Trip</th><th>Note</th>
+          </tr></thead>
           <tbody>
-            {(w.events||[]).map((e,i)=>(
-              <tr key={i} className="border-t border-slate-100">
-                <td className="py-2 text-slate-500">{e.at}</td>
-                <td className="font-medium">{e.type}</td>
-                <td><span className={cls('chip', /Recovery|Shortfall|Loan|Penalty/.test(e.type)?'bg-rose-100 text-rose-700':'bg-emerald-100 text-emerald-700')}>{/Recovery|Shortfall|Loan|Penalty/.test(e.type)?'Party owes FT':'FT owes Party'}</span></td>
-                <td className="text-right tabular-nums">{INR(e.amt)}</td>
-                <td className="text-xs">{e.ref}</td>
-                <td className="text-xs text-slate-500">{e.note}</td>
-              </tr>
-            ))}
-            {(w.events||[]).length===0 && <tr><td colSpan={6}><Empty msg="No wallet events"/></td></tr>}
+            {(w.events||[]).filter(e => kind==='fo' ? /Recovery|Shortfall|Loan|Penalty|Cancelled/.test(e.type) : true).map((e,i)=>{
+              const isPartyOwes = /Recovery|Shortfall|Loan|Penalty|Cancelled receipt/.test(e.type) || (kind==='fo' && /Cancelled/.test(e.type));
+              return (
+                <tr key={i} className="border-t border-slate-100">
+                  <td className="py-2 text-slate-500">{e.at}</td>
+                  <td className="font-medium">{e.type}</td>
+                  <td>
+                    {kind==='fo'
+                      ? <span className="chip bg-rose-100 text-rose-700">FO owes FT</span>
+                      : <span className={cls('chip', isPartyOwes?'bg-rose-100 text-rose-700':'bg-emerald-100 text-emerald-700')}>{isPartyOwes?'LSP owes FT':'FT owes LSP'}</span>
+                    }
+                  </td>
+                  <td className="text-right tabular-nums">{INR(e.amt)}</td>
+                  <td className="text-xs"><button className="text-brand-700 hover:underline" onClick={()=>{const m=e.ref.match(/T-\d+/); if(m) setRoute({name:'trip',id:m[0]});}}>{e.ref}</button></td>
+                  <td className="text-xs text-slate-500">{e.note}</td>
+                </tr>
+              );
+            })}
+            {(!w.events || w.events.length===0) && <tr><td colSpan={6}><Empty msg="No wallet events"/></td></tr>}
           </tbody>
         </table>
       </Card>
 
-      <Card title="Trip-wise Ledger" right={<div className="flex gap-2"><Button kind="ghost" size="sm">Filter</Button><Button kind="ghost" size="sm">Download CSV</Button></div>}>
+      {/* ── Trip-wise ledger (filtered) ── */}
+      <Card title="Trip-wise Ledger" right={
+        <div className="flex items-center gap-2">
+          {filter!=='all' && (
+            <span className="chip bg-brand-50 text-brand-700">
+              Filter: {FILTER_LABELS[filter]} ({visibleTrips.length})
+              <button className="ml-1 hover:text-brand-900" onClick={()=>setFilter('all')}>✕</button>
+            </span>
+          )}
+          <Button kind="ghost" size="sm">Download CSV</Button>
+        </div>
+      }>
         <table className="min-w-full text-sm">
           <thead className="text-slate-500 text-xs">
             <tr className="text-left">
@@ -1425,14 +1530,8 @@ function PartyLedger({ kind, id }){
             </tr>
           </thead>
           <tbody>
-            {partyTrips.map(t=>{
-              const tot = tripTotals(t);
-              const f = kind==='fo'?t.fo.freight:t.lsp.freight;
-              const ch = kind==='fo'?tot.foCharges:tot.lspCharges;
-              const dd = kind==='fo'?tot.foDed:tot.lspDed;
-              const nt = kind==='fo'?tot.foNet:tot.lspNet;
-              const pd = kind==='fo'?tot.foPaid:tot.lspRecvd;
-              const du = kind==='fo'?tot.foDue:tot.lspDue;
+            {visibleTrips.map(t=>{
+              const c = classify(t);
               return (
                 <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50/50">
                   <td className="py-2"><input type="checkbox"/></td>
@@ -1440,20 +1539,42 @@ function PartyLedger({ kind, id }){
                   <td>{t.route}</td>
                   <td><StatusChip status={t.status}/></td>
                   <td><StatusChip status={t.podStatus}/></td>
-                  <td className="text-right tabular-nums">{INR(f)}</td>
-                  <td className="text-right tabular-nums">{INR(ch)}</td>
-                  <td className="text-right tabular-nums">{INR(dd)}</td>
-                  <td className="text-right tabular-nums font-semibold">{INR(nt)}</td>
-                  <td className="text-right tabular-nums">{INR(pd)}</td>
-                  <td className={cls('text-right tabular-nums', du>0?'text-rose-700':'text-emerald-700')}>{INR(du)}</td>
+                  <td className="text-right tabular-nums">{INR(kind==='fo'?t.fo.freight:t.lsp.freight)}</td>
+                  <td className="text-right tabular-nums">{INR(kind==='fo'?c.tot.foCharges:c.tot.lspCharges)}</td>
+                  <td className="text-right tabular-nums">{INR(kind==='fo'?c.tot.foDed:c.tot.lspDed)}</td>
+                  <td className="text-right tabular-nums font-semibold">{INR(c.net)}</td>
+                  <td className="text-right tabular-nums">{INR(c.paid)}</td>
+                  <td className={cls('text-right tabular-nums', c.due>0?'text-rose-700':'text-emerald-700')}>{INR(c.due)}</td>
                 </tr>
               );
             })}
-            {partyTrips.length===0 && <tr><td colSpan={11}><Empty msg="No trips"/></td></tr>}
+            {visibleTrips.length===0 && <tr><td colSpan={11}><Empty msg={`No trips match "${FILTER_LABELS[filter]}"`}/></td></tr>}
           </tbody>
         </table>
       </Card>
     </div>
+  );
+}
+
+function ClickableStat({ label, value, sub, tone='brand', active, onClick, icon }){
+  const tones = {
+    brand:   active?'border-brand-500 bg-brand-50 ring-2 ring-brand-200':'border-slate-200 bg-white hover:border-brand-300',
+    emerald: active?'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200':'border-slate-200 bg-white hover:border-emerald-300',
+    rose:    active?'border-rose-500 bg-rose-50 ring-2 ring-rose-200':'border-slate-200 bg-white hover:border-rose-300',
+    amber:   active?'border-amber-500 bg-amber-50 ring-2 ring-amber-200':'border-slate-200 bg-white hover:border-amber-300',
+    indigo:  active?'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200':'border-slate-200 bg-white hover:border-indigo-300',
+    slate:   active?'border-slate-500 bg-slate-50 ring-2 ring-slate-200':'border-slate-200 bg-white hover:border-slate-300',
+  };
+  return (
+    <button onClick={onClick} className={cls('rounded-2xl border p-4 text-left transition shadow-soft', tones[tone])}>
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-slate-500 font-medium uppercase tracking-wide">{label}</div>
+        {icon && <div className="text-lg">{icon}</div>}
+      </div>
+      <div className="text-2xl font-semibold text-slate-900 mt-1 tabular-nums">{value}</div>
+      <div className="text-[11px] text-slate-500 mt-1">{sub}</div>
+      <div className="text-[11px] text-brand-700 mt-2">{active?'✓ Filtering trip list':'Click to filter →'}</div>
+    </button>
   );
 }
 
