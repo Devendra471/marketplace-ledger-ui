@@ -183,15 +183,31 @@ function generateMoreTrips(){
 
 const TRIPS_SEED = [...BASE_TRIPS, ...generateMoreTrips()];
 
+// Demo: pre-apply ₹14,000 wallet recovery to T-100336 (FO-1002 DISPATCHED with advance)
+// so users see how a wallet auto-application appears as a line in the trip ledger.
+(function seedWalletRecovery(){
+  const demo = TRIPS_SEED.find(t => t.id === 'T-100336');
+  if (demo && demo.foId === 'FO-1002' && demo.fo.payments.length > 0) {
+    demo.fo.payments[0].amt = Math.max(0, demo.fo.payments[0].amt - 14000);
+    demo.fo.payments.push({ stage:'Advance', amt:14000, utr:'WALLET-NET', at:'2026-05-18 09:30', mode:'Wallet Recovery', by:'system', isWallet:true });
+  }
+})();
+
 const WALLETS_SEED = {
-  // party -> { ftOwes: amount (FT must pay party), partyOwes: amount (party must pay FT), events:[...] }
+  // party -> { ftOwes, partyOwes, events:[...] }
+  // Event types containing "Applied" carry NEGATIVE amounts and reduce the wallet
   'FO-1001': { ftOwes: 0,    partyOwes: 0,    events: [] },
-  'FO-1002': { ftOwes: 0,    partyOwes: 64000,events: [{ at:'2026-05-12 18:10', type:'Recovery', amt:64000, ref:'T-100232 cancelled', note:'Advance paid; trip cancelled, becomes recoverable' }] },
+  'FO-1002': { ftOwes: 0,    partyOwes: 50000,events: [
+    { at:'2026-05-12 18:10', type:'Recovery (Cancelled trip)', amt:64000, ref:'T-100232', note:'Advance paid; trip cancelled, becomes recoverable' },
+    { at:'2026-05-18 09:30', type:'Wallet Applied to Trip',    amt:-14000, ref:'T-100336', note:'Auto-deducted from advance payout', sourceRef:'T-100232' },
+  ] },
   'FO-1003': { ftOwes: 0,    partyOwes: 0,    events: [] },
-  'FO-1004': { ftOwes: 2000, partyOwes: 0,    events: [{ at:'2026-04-03 11:30', type:'Refund/Credit', amt:2000, ref:'T-100199 overpaid', note:'Overpaid balance returned as credit' }] },
-  'LSP-2001':{ ftOwes: 5000, partyOwes: 0,    events: [{ at:'2026-04-30 15:00', type:'Excess receipt', amt:5000, ref:'IRN-44 collection', note:'LSP overpaid by ₹5,000' }] },
-  'LSP-2002':{ ftOwes: 80000,partyOwes: 0,    events: [{ at:'2026-05-12 18:10', type:'Cancelled receipt', amt:80000, ref:'T-100232 cancelled', note:'LSP advance becomes credit' }] },
-  'LSP-2003':{ ftOwes: 0,    partyOwes: 6000, events: [{ at:'2026-05-05 12:00', type:'Shortfall',  amt:6000,  ref:'IRN-55 underpaid', note:'Short collection vs invoice' }] },
+  'FO-1004': { ftOwes: 0,    partyOwes: 2000, events: [
+    { at:'2026-04-03 11:30', type:'Recovery (Overpayment)',   amt:2000, ref:'T-100199', note:'Earlier balance overpaid by ₹2,000' },
+  ] },
+  'LSP-2001':{ ftOwes: 5000, partyOwes: 0,    events: [{ at:'2026-04-30 15:00', type:'Excess Receipt (LSP overpaid)', amt:5000, ref:'IRN-44', note:'LSP overpaid by ₹5,000 — credit available' }] },
+  'LSP-2002':{ ftOwes: 80000,partyOwes: 0,    events: [{ at:'2026-05-12 18:10', type:'Cancelled Receipt',  amt:80000, ref:'T-100232', note:'LSP advance becomes credit' }] },
+  'LSP-2003':{ ftOwes: 0,    partyOwes: 6000, events: [{ at:'2026-05-05 12:00', type:'Shortfall',           amt:6000,  ref:'IRN-55',  note:'Short collection vs invoice' }] },
 };
 
 const AUDIT_SEED = [
@@ -677,35 +693,68 @@ function TripDetail({ id }){
   }
 
   // ---- pay/receive ----
-  const [payOpen, setPayOpen] = useState(null); // { kind: 'pay'|'recv', stage }
-  const [payForm, setPayForm] = useState({ amt:'', mode:'Razorpay', utr:'' });
+  const { wallets, setWallets } = useApp();
+  const [payOpen, setPayOpen] = useState(null); // { kind: 'pay'|'recv', stage, walletAvail, walletApply, grossAmt }
+  const [payForm, setPayForm] = useState({ amt:'', mode:'Razorpay', utr:'', applyWallet:true });
 
   function openPay(kind, stage){
-    let suggestedAmt = '';
+    let grossAmt = 0;
     if (kind === 'pay') {
-      if (stage === 'Advance') suggestedAmt = Math.round(trip.fo.freight * 0.8 + sumCharges(trip.fo.charges.filter(c=>['C1','C3'].includes(c.cid))));
-      if (stage === 'Balance') suggestedAmt = tot.foDue;
+      if (stage === 'Advance') grossAmt = Math.round(trip.fo.freight * 0.85 + sumCharges(trip.fo.charges.filter(c=>['C1','C3'].includes(c.cid))));
+      else if (stage === 'Balance') grossAmt = tot.foDue;
+      else grossAmt = 0;
     } else {
-      if (stage === 'Advance') suggestedAmt = Math.round(trip.lsp.freight * 0.8 + sumCharges(trip.lsp.charges.filter(c=>['C1','C6','C3'].includes(c.cid))));
-      if (stage === 'Balance') suggestedAmt = tot.lspDue;
+      if (stage === 'Advance') grossAmt = Math.round(trip.lsp.freight * 0.85 + sumCharges(trip.lsp.charges.filter(c=>['C1','C6','C3'].includes(c.cid))));
+      else if (stage === 'Balance') grossAmt = tot.lspDue;
+      else grossAmt = 0;
     }
-    setPayForm({ amt: String(suggestedAmt), mode: kind==='pay'?'Razorpay':'NEFT', utr:'' });
-    setPayOpen({ kind, stage });
+    const partyId = kind==='pay' ? trip.foId : trip.lspId;
+    const walletAvail = kind==='pay' ? (wallets[partyId]?.partyOwes || 0) : 0; // only auto-net FO owes FT against payouts
+    const walletApply = Math.min(walletAvail, grossAmt);
+    const net = Math.max(0, grossAmt - walletApply);
+    setPayForm({ amt: String(net), mode: kind==='pay'?'Razorpay':'NEFT', utr:'', applyWallet: walletApply>0 });
+    setPayOpen({ kind, stage, walletAvail, walletApply, grossAmt });
   }
   function submitPay(){
     const amt = Number(payForm.amt);
-    if (!amt) return;
+    if (!amt && !(payForm.applyWallet && payOpen.walletApply>0)) return;
     const due = payOpen.kind==='pay' ? tot.foDue : tot.lspDue;
-    if (amt > due && !confirm(`Amount ${INR(amt)} exceeds outstanding ${payOpen.kind==='pay'?'payable':'receivable'} of ${INR(due)}. Continue?`)) return;
+    const totalSettling = amt + (payForm.applyWallet ? payOpen.walletApply : 0);
+    if (totalSettling > due && !confirm(`Settling ${INR(totalSettling)} exceeds outstanding ${payOpen.kind==='pay'?'payable':'receivable'} of ${INR(due)}. Continue?`)) return;
     const utr = payForm.utr || ('AUTO-'+Math.floor(Math.random()*1e7));
     const at = new Date().toISOString().slice(0,16).replace('T',' ');
-    updateTrip(t => {
-      if (payOpen.kind === 'pay') t.fo = { ...t.fo, payments: [...t.fo.payments, { stage: payOpen.stage, amt, utr, at, mode: payForm.mode, by:'you@ft' }] };
-      else                          t.lsp = { ...t.lsp, receipts: [...t.lsp.receipts, { stage: payOpen.stage, amt, utr, at, mode: payForm.mode, by:'you@ft' }] };
-      return t;
-    });
-    pushAudit({ actor:'you@ft', trip:trip.id, party: payOpen.kind==='pay'?'FO':'LSP', type:'Payment paid', action: payOpen.kind==='pay'?`${payOpen.stage} paid`:`${payOpen.stage} received`, details: `${INR(amt)} via ${payForm.mode} UTR ${utr}` });
-    showToast(`${payOpen.stage} ${payOpen.kind==='pay'?'paid':'received'}`);
+    const partyId = payOpen.kind==='pay' ? trip.foId : trip.lspId;
+    // 1. Record main payment
+    if (amt > 0) {
+      updateTrip(t => {
+        if (payOpen.kind === 'pay') t.fo = { ...t.fo, payments: [...t.fo.payments, { stage: payOpen.stage, amt, utr, at, mode: payForm.mode, by:'you@ft' }] };
+        else                          t.lsp = { ...t.lsp, receipts: [...t.lsp.receipts, { stage: payOpen.stage, amt, utr, at, mode: payForm.mode, by:'you@ft' }] };
+        return t;
+      });
+      pushAudit({ actor:'you@ft', trip:trip.id, party: payOpen.kind==='pay'?'FO':'LSP', type:'Payment paid', action: payOpen.kind==='pay'?`${payOpen.stage} paid`:`${payOpen.stage} received`, details: `${INR(amt)} via ${payForm.mode} UTR ${utr}` });
+    }
+    // 2. Record wallet application as a line item in payments AND on wallet
+    if (payForm.applyWallet && payOpen.walletApply > 0) {
+      const walletAmt = payOpen.walletApply;
+      updateTrip(t => {
+        if (payOpen.kind === 'pay') t.fo = { ...t.fo, payments: [...t.fo.payments, { stage: payOpen.stage, amt: walletAmt, utr:'WALLET-NET', at, mode:'Wallet Recovery', by:'system', isWallet:true }] };
+        return t;
+      });
+      // Reduce wallet partyOwes + push wallet event
+      setWallets(ws => {
+        const cur = ws[partyId] || { ftOwes:0, partyOwes:0, events:[] };
+        return {
+          ...ws,
+          [partyId]: {
+            ...cur,
+            partyOwes: Math.max(0, (cur.partyOwes||0) - walletAmt),
+            events: [{ at, type:'Wallet Applied to Trip', amt: -walletAmt, ref: trip.id, note:`Auto-deducted from ${payOpen.stage.toLowerCase()} payout`, sourceRef: (cur.events||[]).find(e=>!/Applied/.test(e.type))?.ref || '' }, ...(cur.events||[]) ],
+          }
+        };
+      });
+      pushAudit({ actor:'system', trip:trip.id, party:'FO', type:'Payment paid', action:'Wallet recovery applied', details:`${INR(walletAmt)} netted off from ${payOpen.stage} payout (FO Owes FT reduced)` });
+    }
+    showToast(`${payOpen.stage} ${payOpen.kind==='pay'?'paid':'received'}${payForm.applyWallet && payOpen.walletApply>0?` • Wallet ${INR(payOpen.walletApply)} applied`:''}`);
     setPayOpen(null);
   }
 
@@ -914,16 +963,53 @@ function TripDetail({ id }){
           <Button onClick={submitPay}>{payOpen?.kind==='pay'?'Pay Now':'Record Receipt'}</Button>
         </>
       }>
-        <div className="space-y-3">
-          <Input label="Amount (₹)" type="number" value={payForm.amt} onChange={e=>setPayForm({...payForm,amt:e.target.value})}/>
-          <Select label="Mode" value={payForm.mode} onChange={e=>setPayForm({...payForm,mode:e.target.value})}>
-            {(payOpen?.kind==='pay'?['Razorpay','NEFT','Cash','Cheque']:['NEFT','RTGS','UPI','Cheque','Cash']).map(m=><option key={m}>{m}</option>)}
-          </Select>
-          <Input label="UTR / Reference" value={payForm.utr} onChange={e=>setPayForm({...payForm,utr:e.target.value})} placeholder="Leave blank to auto-generate"/>
-          <div className="text-xs bg-amber-50 text-amber-800 p-3 rounded-lg">
-            Gating checks: {payOpen?.stage==='Balance' && trip.podStatus!=='Approved' ? <span className="text-rose-700">POD not approved — balance payment normally blocked (allowed in prototype)</span> : 'Pass'}
+        {payOpen && (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div className="flex justify-between text-sm"><span className="text-slate-500">Gross {payOpen.stage}</span><span className="font-semibold tabular-nums">{INR(payOpen.grossAmt)}</span></div>
+              {payOpen.walletAvail > 0 && (
+                <>
+                  <label className="flex items-center justify-between mt-2 cursor-pointer">
+                    <div className="text-sm flex items-center gap-2">
+                      <input type="checkbox" checked={payForm.applyWallet} onChange={e=>{
+                        const apply = e.target.checked;
+                        const newApply = apply ? Math.min(payOpen.walletAvail, payOpen.grossAmt) : 0;
+                        setPayForm({...payForm, applyWallet:apply, amt:String(Math.max(0, payOpen.grossAmt - newApply))});
+                        setPayOpen({...payOpen, walletApply:newApply});
+                      }}/>
+                      <span>Apply wallet credit (FO Owes FT)</span>
+                    </div>
+                    <span className="text-rose-700 font-semibold tabular-nums">{INR(payOpen.walletAvail)} available</span>
+                  </label>
+                  {payForm.applyWallet && payOpen.walletApply > 0 && (
+                    <div className="flex justify-between text-sm mt-1 text-emerald-700">
+                      <span>− Wallet applied</span><span className="font-semibold tabular-nums">− {INR(payOpen.walletApply)}</span>
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="flex justify-between text-sm mt-2 pt-2 border-t border-slate-200">
+                <span className="font-medium">Net payable now</span>
+                <span className="font-bold text-lg tabular-nums">{INR(Number(payForm.amt||0))}</span>
+              </div>
+            </div>
+
+            <Input label="Amount (₹) — editable" type="number" value={payForm.amt} onChange={e=>setPayForm({...payForm,amt:e.target.value})}/>
+            <Select label="Mode" value={payForm.mode} onChange={e=>setPayForm({...payForm,mode:e.target.value})}>
+              {(payOpen.kind==='pay'?['Razorpay','NEFT','Cash','Cheque']:['NEFT','RTGS','UPI','Cheque','Cash']).map(m=><option key={m}>{m}</option>)}
+            </Select>
+            <Input label="UTR / Reference" value={payForm.utr} onChange={e=>setPayForm({...payForm,utr:e.target.value})} placeholder="Leave blank to auto-generate"/>
+
+            {payForm.applyWallet && payOpen.walletApply > 0 && (
+              <div className="text-xs bg-emerald-50 text-emerald-800 p-3 rounded-lg">
+                💰 A wallet recovery line item of {INR(payOpen.walletApply)} will be added to this trip's ledger, and the FO Owes FT balance will reduce by the same amount.
+              </div>
+            )}
+            <div className="text-xs bg-amber-50 text-amber-800 p-3 rounded-lg">
+              Gating: {payOpen.stage==='Balance' && trip.podStatus!=='Approved' ? <span className="text-rose-700">POD not approved — balance payment normally blocked (allowed in prototype)</span> : 'Pass'}
+            </div>
           </div>
-        </div>
+        )}
       </Modal>
     </div>
   );
@@ -1019,19 +1105,23 @@ function PartySectionTable({ side, trip, totals, fo, onApprove, onPay, onEdit })
       </div>
       <table className="min-w-full text-sm">
         <thead className="text-slate-500 text-xs"><tr className="text-left">
-          <th className="py-2">Stage</th><th>Amount</th><th>Mode</th><th>Reference</th><th>At</th>
+          <th className="py-2">Stage</th><th>Amount</th><th>Mode</th><th>Reference</th><th>At</th><th>Source</th>
         </tr></thead>
         <tbody>
           {(payments||[]).map((p,i)=>(
-            <tr key={i} className="border-t border-slate-100">
-              <td className="py-2 font-medium">{p.stage}</td>
-              <td className="tabular-nums">{INR(p.amt)}</td>
+            <tr key={i} className={cls('border-t border-slate-100', p.isWallet && 'bg-emerald-50/50')}>
+              <td className="py-2 font-medium">
+                {p.stage}
+                {p.isWallet && <span className="ml-2 chip bg-emerald-100 text-emerald-700">Wallet Recovery</span>}
+              </td>
+              <td className="tabular-nums">{p.isWallet?'− ':''}{INR(p.amt)}</td>
               <td>{p.mode||'NEFT'}</td>
               <td className="font-mono text-xs">{p.utr}</td>
               <td className="text-slate-500">{p.at}</td>
+              <td className="text-xs text-slate-500">{p.isWallet?'Settled from FO Owes FT':(p.by||'—')}</td>
             </tr>
           ))}
-          {(payments||[]).length===0 && <tr><td colSpan={5}><Empty msg="No payments yet"/></td></tr>}
+          {(payments||[]).length===0 && <tr><td colSpan={6}><Empty msg="No payments yet"/></td></tr>}
         </tbody>
       </table>
     </div>
@@ -1358,29 +1448,52 @@ function PartyLedger({ kind, id }){
     const net = kind==='fo' ? tot.foNet : tot.lspNet;
     const paid = kind==='fo' ? tot.foPaid : tot.lspRecvd;
     const due = kind==='fo' ? tot.foDue : tot.lspDue;
+    const payments = kind==='fo' ? (t.fo.payments||[]) : (t.lsp.receipts||[]);
+    const advancePaid = payments.some(p => p.stage==='Advance');
+    const balancePaid = payments.some(p => p.stage==='Balance');
     const podApproved = t.podStatus==='Approved';
-    const isSettled = t.status==='SETTLED' && due<=0 && podApproved;
-    const isOverpaid = paid > net && t.status!=='CANCELLED'; // overpayment
-    const isCancelledWithPayment = t.status==='CANCELLED' && paid > 0; // recovery scenario
+    const isPaidAnything = paid > 0;
+    const isOverpaid = paid > net && t.status!=='CANCELLED';
+    const isCancelledWithPayment = t.status==='CANCELLED' && paid > 0;
+
+    // Eligible for Payment = what we can legitimately pay right now per rules
+    // - Advance eligible: status DISPATCHED/IN-TRANSIT (or later) AND advance not paid
+    // - Balance eligible: POD approved AND balance not paid
+    let eligibleAmt = 0;
+    let eligibleType = null;
+    const advAllowedStatuses = ['DISPATCHED','IN-TRANSIT','UNLOADED','SETTLED'];
+    if (!advancePaid && advAllowedStatuses.includes(t.status)) {
+      eligibleAmt += Math.round(net * 0.85);
+      eligibleType = 'Advance';
+    }
+    if (!balancePaid && podApproved && t.status!=='CANCELLED') {
+      eligibleAmt += Math.max(0, due - (eligibleType==='Advance' ? Math.round(net*0.85) : 0));
+      eligibleType = eligibleType ? 'Advance + Balance' : 'Balance';
+    }
+    eligibleAmt = Math.max(0, Math.min(eligibleAmt, due));
+
     return {
-      tot, net, paid, due, podApproved, isSettled, isOverpaid, isCancelledWithPayment,
-      auditedPending: podApproved && due > 0 && t.status!=='CANCELLED',
-      unauditedPending: !podApproved && due > 0 && t.status!=='CANCELLED',
+      tot, net, paid, due, podApproved, isPaidAnything, isOverpaid, isCancelledWithPayment,
+      advancePaid, balancePaid, eligibleAmt, eligibleType,
+      eligible: eligibleAmt > 0,
+      awaitingPOD: !podApproved && due > 0 && t.status!=='CANCELLED' && !(eligibleAmt > 0 && !advancePaid),
       partyOwesFT: isOverpaid || isCancelledWithPayment,
     };
   }
 
-  let totalNet = 0, totalSettledAmt = 0;
-  let settledCount = 0, auditedPendingAmt = 0, auditedPendingCount = 0;
-  let unauditedPendingAmt = 0, unauditedPendingCount = 0;
+  let totalNet = 0, totalPaidAmt = 0, totalPaidCount = 0;
+  let eligibleAmtTot = 0, eligibleCount = 0;
+  let awaitingPODAmt = 0, awaitingPODCount = 0;
   let owesFTAmt = 0, owesFTCount = 0;
   let ftOwesAmt = 0, ftOwesCount = 0;
+  // wallet settlements applied to this party (negative-amount events)
+  const walletSettledTotal = (w.events||[]).filter(e=>/Applied/.test(e.type)).reduce((s,e)=>s+Math.abs(e.amt||0),0);
   partyTrips.forEach(t => {
     const c = classify(t);
     totalNet += c.net;
-    if (c.isSettled) { totalSettledAmt += c.net; settledCount++; }
-    if (c.auditedPending)   { auditedPendingAmt   += c.due; auditedPendingCount++; }
-    if (c.unauditedPending) { unauditedPendingAmt += c.due; unauditedPendingCount++; }
+    if (c.isPaidAnything) { totalPaidAmt += c.paid; totalPaidCount++; }
+    if (c.eligible)     { eligibleAmtTot  += c.eligibleAmt;  eligibleCount++; }
+    if (c.awaitingPOD)  { awaitingPODAmt  += c.due; awaitingPODCount++; }
     if (c.partyOwesFT) {
       const over = Math.max(0, c.paid - c.net);
       owesFTAmt += over;
@@ -1394,11 +1507,11 @@ function PartyLedger({ kind, id }){
   function matchesFilter(t){
     const c = classify(t);
     switch(filter){
-      case 'settled': return c.isSettled;
-      case 'audited-pending': return c.auditedPending;
-      case 'unaudited-pending': return c.unauditedPending;
+      case 'paid': return c.isPaidAnything;
+      case 'eligible': return c.eligible;
+      case 'awaiting-pod': return c.awaitingPOD;
       case 'owes-ft': return c.partyOwesFT;
-      case 'ft-owes': return kind==='lsp' && c.paid > c.net; // mock heuristic
+      case 'ft-owes': return kind==='lsp' && c.paid > c.net;
       default: return true;
     }
   }
@@ -1406,9 +1519,9 @@ function PartyLedger({ kind, id }){
 
   const FILTER_LABELS = {
     all:'All trips',
-    settled:'Settled',
-    'audited-pending':'Audited & Payment Pending',
-    'unaudited-pending':'Awaiting POD / Audit',
+    paid: kind==='fo'?'Amount Paid to FO':'Amount Received from LSP',
+    eligible:'Eligible for Payment (Advance + Approved POD)',
+    'awaiting-pod':'Awaiting POD / Audit',
     'owes-ft': kind==='fo'?'FO Owes FT (Overpaid / Cancelled)':'LSP Owes FT (Shortfall / Cancelled)',
     'ft-owes':'FT Owes LSP (Overpaid by LSP)',
   };
@@ -1434,16 +1547,17 @@ function PartyLedger({ kind, id }){
           tone="brand"
         />
         <ClickableStat
-          active={filter==='settled'} onClick={()=>setFilter('settled')}
-          label="Settled" value={INR(totalSettledAmt)}
-          sub={`${settledCount} trip${settledCount===1?'':'s'} • POD approved + balance paid`}
+          active={filter==='paid'} onClick={()=>setFilter('paid')}
+          label={kind==='fo'?'Amount Paid to FO':'Amount Received from LSP'}
+          value={INR(totalPaidAmt)}
+          sub={`Across ${totalPaidCount} trip${totalPaidCount===1?'':'s'} • includes advance + interim + balance`}
           tone="emerald"
         />
         <ClickableStat
           active={filter==='owes-ft'} onClick={()=>setFilter('owes-ft')}
           label={kind==='fo'?'FO Owes FT':'LSP Owes FT'}
-          value={INR(owesFTAmt + (w.partyOwes||0))}
-          sub={kind==='fo'?'Overpayment / cancelled advance — recover from next trip':'Shortfall / cancelled receipt'}
+          value={INR(w.partyOwes||0)}
+          sub={`${(w.events||[]).filter(e=>!/Applied/.test(e.type)).length} accrued • ${INR(walletSettledTotal)} already settled against trips`}
           tone="rose"
         />
       </div>
@@ -1451,52 +1565,57 @@ function PartyLedger({ kind, id }){
       {/* ── Action buckets: who is blocking ── */}
       <div className="grid grid-cols-2 gap-3">
         <ClickableStat
-          active={filter==='unaudited-pending'} onClick={()=>setFilter('unaudited-pending')}
+          active={filter==='awaiting-pod'} onClick={()=>setFilter('awaiting-pod')}
           icon="⏳" label="Awaiting POD / Audit"
-          value={INR(unauditedPendingAmt)}
-          sub={`${unauditedPendingCount} trips • Ops + POD Audit own next step`}
+          value={INR(awaitingPODAmt)}
+          sub={`${awaitingPODCount} trips • Ops + POD Audit own next step`}
           tone="amber"
         />
         <ClickableStat
-          active={filter==='audited-pending'} onClick={()=>setFilter('audited-pending')}
-          icon="💰" label="Audited & Payment Pending"
-          value={INR(auditedPendingAmt)}
-          sub={`${auditedPendingCount} trips • POD approved, Finance to release ${kind==='fo'?'balance payout':'collection'}`}
+          active={filter==='eligible'} onClick={()=>setFilter('eligible')}
+          icon="💰" label="Eligible for Payment (Advance + Approved POD)"
+          value={INR(eligibleAmtTot)}
+          sub={`${eligibleCount} trips • Advance (Dispatched/In-transit) + Balance (POD approved)`}
           tone="indigo"
         />
       </div>
 
       {/* ── Wallet ── only FO Owes FT for FOs; both directions for LSPs ── */}
-      <Card title={kind==='fo'?'Wallet — Recoverable from future payouts':'Wallet — Credits & Recoveries'}
-        right={kind==='fo'
-          ? <div className="text-xs text-slate-500">Recoverable: <span className="font-semibold text-rose-700">{INR(w.partyOwes||0)}</span></div>
-          : <div className="text-xs text-slate-500">Net exposure: <span className="font-semibold text-slate-800">{INR((w.ftOwes||0)-(w.partyOwes||0))}</span></div>
-        }>
-        {kind==='fo' && (
-          <div className="text-xs text-slate-500 mb-3 bg-amber-50 border border-amber-100 rounded-lg p-3">
-            FO doesn't pay FT directly. Any "FO Owes FT" amount is auto-netted from this FO's next trip payout (advance or balance).
+      <Card title={kind==='fo'?'Wallet — Recoverable & Settled History':'Wallet — Credits & Recoveries'}
+        right={
+          <div className="text-xs text-slate-500 flex gap-4">
+            <span>Remaining recoverable: <span className="font-semibold text-rose-700">{INR(w.partyOwes||0)}</span></span>
+            <span>Settled vs trips: <span className="font-semibold text-emerald-700">{INR(walletSettledTotal)}</span></span>
           </div>
-        )}
+        }>
         <table className="min-w-full text-sm">
           <thead className="text-slate-500 text-xs"><tr className="text-left">
-            <th className="py-2">At</th><th>Type</th><th>Direction</th><th className="text-right">Amount</th><th>Source Trip</th><th>Note</th>
+            <th className="py-2">At</th><th>Type</th><th>Status</th><th className="text-right">Amount</th><th>Trip</th><th>Note</th>
           </tr></thead>
           <tbody>
-            {(w.events||[]).filter(e => kind==='fo' ? /Recovery|Shortfall|Loan|Penalty|Cancelled/.test(e.type) : true).map((e,i)=>{
+            {(w.events||[]).filter(e => kind==='fo' ? /Recovery|Shortfall|Loan|Penalty|Cancelled|Applied/.test(e.type) : true).map((e,i)=>{
+              const isApplied = /Applied/.test(e.type);
               const isPartyOwes = /Recovery|Shortfall|Loan|Penalty|Cancelled receipt/.test(e.type) || (kind==='fo' && /Cancelled/.test(e.type));
               return (
                 <tr key={i} className="border-t border-slate-100">
                   <td className="py-2 text-slate-500">{e.at}</td>
                   <td className="font-medium">{e.type}</td>
                   <td>
-                    {kind==='fo'
-                      ? <span className="chip bg-rose-100 text-rose-700">FO owes FT</span>
-                      : <span className={cls('chip', isPartyOwes?'bg-rose-100 text-rose-700':'bg-emerald-100 text-emerald-700')}>{isPartyOwes?'LSP owes FT':'FT owes LSP'}</span>
+                    {isApplied
+                      ? <span className="chip bg-emerald-100 text-emerald-700">Settled against trip</span>
+                      : kind==='fo'
+                        ? <span className="chip bg-rose-100 text-rose-700">FO owes FT</span>
+                        : <span className={cls('chip', isPartyOwes?'bg-rose-100 text-rose-700':'bg-emerald-100 text-emerald-700')}>{isPartyOwes?'LSP owes FT':'FT owes LSP'}</span>
                     }
                   </td>
-                  <td className="text-right tabular-nums">{INR(e.amt)}</td>
-                  <td className="text-xs"><button className="text-brand-700 hover:underline" onClick={()=>{const m=e.ref.match(/T-\d+/); if(m) setRoute({name:'trip',id:m[0]});}}>{e.ref}</button></td>
-                  <td className="text-xs text-slate-500">{e.note}</td>
+                  <td className={cls('text-right tabular-nums font-semibold', isApplied?'text-emerald-700':'')}>
+                    {isApplied ? `− ${INR(Math.abs(e.amt))}` : INR(e.amt)}
+                  </td>
+                  <td className="text-xs"><button className="text-brand-700 hover:underline" onClick={()=>{const m=String(e.ref).match(/T-\d+/); if(m) setRoute({name:'trip',id:m[0]});}}>{e.ref}</button></td>
+                  <td className="text-xs text-slate-500">
+                    {e.note}
+                    {isApplied && e.sourceRef && <div className="text-[10px] text-slate-400">(from {e.sourceRef})</div>}
+                  </td>
                 </tr>
               );
             })}
