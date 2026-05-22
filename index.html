@@ -43,15 +43,15 @@ const { useState, useMemo, useEffect, useRef, createContext, useContext, Fragmen
 
 const PARTIES = {
   fo: [
-    { id:'FO-1001', name:'Sharma Logistics', pan:'AAACS1234C', gst:'29AAACS1234C1Z2', city:'Bengaluru', tdsRate:2, hasExemption:false, agreementVersion:'v3', accountNo:'XXXX4521', ifsc:'HDFC0001234' },
-    { id:'FO-1002', name:'Rao Transport',    pan:'AABCR9876D', gst:'27AABCR9876D1ZQ', city:'Mumbai',    tdsRate:20, hasExemption:false, agreementVersion:'v2', accountNo:'XXXX9821', ifsc:'ICIC0004412' },
-    { id:'FO-1003', name:'N K Logistics',    pan:'ANKPL4567K', gst:null,              city:'Patna',     tdsRate:2, hasExemption:false, agreementVersion:'v3', accountNo:'XXXX1184', ifsc:'SBIN0011245' },
-    { id:'FO-1004', name:'Patel Carriers',   pan:'AAEPP1122E', gst:'24AAEPP1122E1ZJ', city:'Ahmedabad', tdsRate:0, hasExemption:true,  agreementVersion:'v3', accountNo:'XXXX7711', ifsc:'YESB0000123' },
+    { id:'FO-1001', name:'Sharma Logistics', pan:'AAACS1234C', gst:'29AAACS1234C1Z2', city:'Bengaluru', tdsRate:2, panType:'Company',    hasExemption:false, agreementVersion:'v3', accountNo:'XXXX4521', ifsc:'HDFC0001234' },
+    { id:'FO-1002', name:'Rao Transport',    pan:'AABCR9876D', gst:'27AABCR9876D1ZQ', city:'Mumbai',    tdsRate:20,panType:'Company',    hasExemption:false, agreementVersion:'v2', accountNo:'XXXX9821', ifsc:'ICIC0004412' },
+    { id:'FO-1003', name:'N K Logistics',    pan:'ANKPL4567K', gst:null,              city:'Patna',     tdsRate:1, panType:'Individual', hasExemption:false, agreementVersion:'v3', accountNo:'XXXX1184', ifsc:'SBIN0011245' },
+    { id:'FO-1004', name:'Patel Carriers',   pan:'AAEPP1122E', gst:'24AAEPP1122E1ZJ', city:'Ahmedabad', tdsRate:0, panType:'Company',    hasExemption:true,  agreementVersion:'v3', accountNo:'XXXX7711', ifsc:'YESB0000123' },
   ],
   lsp: [
-    { id:'LSP-2001', name:'ABC Manufacturing',     pan:'AABCA1111Z', gst:'29AABCA1111Z1ZB', creditDays:30, branches:[{id:'B1',code:'BLR-HO',gst:'29AABCA1111Z1ZB'},{id:'B2',code:'CHN',gst:'33AABCA1111Z1Z9'}] },
-    { id:'LSP-2002', name:'XYZ Traders',           pan:'AABCX2222Y', gst:'27AABCX2222Y1ZP', creditDays:45, branches:[{id:'B1',code:'BOM-HO',gst:'27AABCX2222Y1ZP'}] },
-    { id:'LSP-2003', name:'Reliable Supply Chain', pan:'AABCR3333X', gst:'07AABCR3333X1ZT', creditDays:60, branches:[{id:'B1',code:'DEL-HO',gst:'07AABCR3333X1ZT'},{id:'B2',code:'GGN',gst:'06AABCR3333X1ZS'}] },
+    { id:'LSP-2001', name:'ABC Manufacturing',     pan:'AABCA1111Z', gst:'29AABCA1111Z1ZB', creditDays:30, creditLimit:2500000, branches:[{id:'B1',code:'BLR-HO',gst:'29AABCA1111Z1ZB'},{id:'B2',code:'CHN',gst:'33AABCA1111Z1Z9'}] },
+    { id:'LSP-2002', name:'XYZ Traders',           pan:'AABCX2222Y', gst:'27AABCX2222Y1ZP', creditDays:45, creditLimit:1500000, branches:[{id:'B1',code:'BOM-HO',gst:'27AABCX2222Y1ZP'}] },
+    { id:'LSP-2003', name:'Reliable Supply Chain', pan:'AABCR3333X', gst:'07AABCR3333X1ZT', creditDays:60, creditLimit:4000000, branches:[{id:'B1',code:'DEL-HO',gst:'07AABCR3333X1ZT'},{id:'B2',code:'GGN',gst:'06AABCR3333X1ZS'}] },
   ]
 };
 
@@ -74,12 +74,11 @@ const COMPONENT_MASTER = [
 
 const RULES = {
   commission: [
-    { upto: 30000,  fee: 500 },
-    { upto: 50000,  fee: 500 },
-    { upto: 100000, fee: 1000 },
-    { upto: 999999, fee: 1500 },
+    { upto: 30000,  fee: 300 },
+    { upto: 60000,  fee: 500 },
+    { upto: 9999999,fee: 700 },
   ],
-  tds: { exemption:0, panMissing:20, panValid:2 },
+  tds: { exemption:0, panMissing:20, individual:1, company:2 },
   podPenalty: { gracedays: 15, perDay: 100, fullForfeitAfterDays: 25 },
   gating: [
     { id:'g1', name:'Advance blocked if trip not LOADED/IN-TRANSIT', enabled:true },
@@ -233,10 +232,70 @@ function commissionFor(freight){
   for (const slab of RULES.commission) if (freight <= slab.upto) return slab.fee;
   return RULES.commission[RULES.commission.length-1].fee;
 }
+function commissionLogic(freight){
+  return `Slabs on LSP freight: ≤ ₹30,000 → ₹300 • ₹30,001–₹60,000 → ₹500 • > ₹60,000 → ₹700. LSP freight ${INR(freight)} → ${INR(commissionFor(freight))}.`;
+}
 function tdsRateFor(fo){
   if (fo.hasExemption) return RULES.tds.exemption;
   if (!fo.pan) return RULES.tds.panMissing;
-  return RULES.tds.panValid;
+  if (fo.panType==='Individual') return RULES.tds.individual;
+  return RULES.tds.company;
+}
+function tdsLogic(fo, base){
+  const rate = tdsRateFor(fo);
+  const why = fo.hasExemption ? 'TDS exemption certificate on file → 0%'
+            : !fo.pan ? 'PAN missing → 20%'
+            : fo.panType==='Individual' ? 'PAN valid & PAN type = Individual/HUF → 1%'
+            : 'PAN valid & PAN type = Company / Firm → 2%';
+  return `${why}. Applied on (Freight + Approved Charges) = ${INR(base)} × ${rate}% = ${INR(Math.round(base*rate/100))}.`;
+}
+// Late reporting penalty — derived from a mock "reportingDelayDays" on the trip
+// (defaults to 5 if status not LOADED to give visible demo value, otherwise 0).
+function lateReportingPenalty(trip){
+  const perDay = 100;
+  const days = trip.reportingDelayDays != null
+    ? trip.reportingDelayDays
+    : (['IN-TRANSIT','UNLOADED','SETTLED'].includes(trip.status) ? 5 : 0);
+  return { amt: days*perDay, days, perDay };
+}
+function podLatePenalty(trip, rules){
+  const perDay = rules.podPenalty.perDay;
+  const grace  = rules.podPenalty.gracedays;
+  if (!trip.unloadedAt) return { amt:0, days:0, perDay, beyondGrace:0 };
+  const u = new Date(trip.unloadedAt).getTime();
+  const now = Date.now();
+  const days = Math.max(0, Math.floor((now-u)/(86400*1000)));
+  const beyondGrace = Math.max(0, days - grace);
+  return { amt: beyondGrace*perDay, days, perDay, beyondGrace };
+}
+
+function systemFODeductions(trip, fo, rules){
+  // Auto-computed deductions shown for transparency. Not appended to manual array
+  // — these are display-only rows the system would compute against the FO ledger.
+  const out = [];
+  const dala = commissionFor(trip.lsp.freight);
+  out.push({ cid:'AUTO-DALA', name:'Dala Charges', amt:dala, status:'Auto-approved',
+             isSystem:true, addedBy:'system', at:trip.startedAt,
+             logic: commissionLogic(trip.lsp.freight) });
+  const base = trip.fo.freight + sumCharges(trip.fo.charges);
+  const rate = tdsRateFor(fo);
+  const tds = Math.round(base * rate / 100);
+  out.push({ cid:'AUTO-TDS', name:'TDS', amt:tds, status:'Auto-approved',
+             isSystem:true, addedBy:'system', at:trip.startedAt,
+             logic: tdsLogic(fo, base) });
+  const lr = lateReportingPenalty(trip);
+  if (lr.amt > 0) {
+    out.push({ cid:'AUTO-LRP', name:'Late Reporting Penalty', amt:lr.amt, status:'Auto-approved',
+               isSystem:true, addedBy:'system', at:trip.startedAt,
+               logic: `₹${lr.perDay}/day × ${lr.days} day${lr.days===1?'':'s'} of late vehicle reporting = ${INR(lr.amt)}.` });
+  }
+  const pod = podLatePenalty(trip, rules);
+  if (pod.amt > 0 && trip.podStatus !== 'Approved') {
+    out.push({ cid:'AUTO-PODP', name:'POD Late Penalty', amt:pod.amt, status:'Auto-approved',
+               isSystem:true, addedBy:'system', at: trip.unloadedAt || trip.startedAt,
+               logic: `${pod.days} days since unload; ${rules.podPenalty.gracedays}-day grace; ₹${pod.perDay} × ${pod.beyondGrace} days past grace = ${INR(pod.amt)}.` });
+  }
+  return out;
 }
 
 function tripTotals(trip){
@@ -500,13 +559,28 @@ function Toast(){
 
 function PaymentsPage(){
   const { trips, setRoute } = useApp();
-  const [filters, setFilters] = useState({ status:'', fo:'', lsp:'', pod:'', q:'' });
+  const [filters, setFilters] = useState({ status:'', fo:'', lsp:'', pod:'', payment:'', q:'' });
 
   const filtered = trips.filter(t => {
     if (filters.status && t.status !== filters.status) return false;
     if (filters.fo && t.foId !== filters.fo) return false;
     if (filters.lsp && t.lspId !== filters.lsp) return false;
-    if (filters.pod && t.podStatus !== filters.pod) return false;
+    if (filters.pod){
+      // pod filter values: Submitted, Pending, Clean POD, Disputed
+      if (filters.pod==='Submitted'    && t.podStatus!=='Submitted') return false;
+      if (filters.pod==='Pending'      && !['Audit Pending','Pending','NA'].includes(t.podStatus)) return false;
+      if (filters.pod==='Clean POD'    && t.podAudit !== 'Clean') return false;
+      if (filters.pod==='Disputed'     && t.podAudit !== 'Disputed') return false;
+    }
+    if (filters.payment){
+      const pays = t.fo.payments || [];
+      const advPaid = pays.some(p=>p.stage==='Advance' && !p.isWallet);
+      const balPaid = pays.some(p=>p.stage==='Balance' && !p.isWallet);
+      const balSettledByWallet = pays.some(p=>p.stage==='Balance' && p.isWallet);
+      if (filters.payment==='Advance Paid'  && !advPaid) return false;
+      if (filters.payment==='Balance Paid'  && !balPaid) return false;
+      if (filters.payment==='Balance Settled (Wallet)' && !balSettledByWallet) return false;
+    }
     if (filters.q) {
       const q = filters.q.toLowerCase();
       if (![t.id,t.lr,t.route,t.vehicle].join(' ').toLowerCase().includes(q)) return false;
@@ -536,7 +610,11 @@ function PaymentsPage(){
           </Select>
           <Select label="POD" value={filters.pod} onChange={e=>setFilters({...filters,pod:e.target.value})}>
             <option value="">All</option>
-            {['Pending','Submitted','Approved','NA'].map(s=><option key={s}>{s}</option>)}
+            {['Submitted','Pending','Clean POD','Disputed'].map(s=><option key={s}>{s}</option>)}
+          </Select>
+          <Select label="Payment" value={filters.payment} onChange={e=>setFilters({...filters,payment:e.target.value})}>
+            <option value="">All</option>
+            {['Advance Paid','Balance Paid','Balance Settled (Wallet)'].map(s=><option key={s}>{s}</option>)}
           </Select>
           <Select label="FO" value={filters.fo} onChange={e=>setFilters({...filters,fo:e.target.value})}>
             <option value="">All</option>
@@ -547,7 +625,7 @@ function PaymentsPage(){
             {PARTIES.lsp.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
           </Select>
           <div className="flex items-end">
-            <Button kind="outline" onClick={()=>setFilters({status:'',fo:'',lsp:'',pod:'',q:''})}>Reset</Button>
+            <Button kind="outline" onClick={()=>setFilters({status:'',fo:'',lsp:'',pod:'',payment:'',q:''})}>Reset</Button>
           </div>
         </div>
 
@@ -572,6 +650,19 @@ function PaymentsPage(){
                 const fo = PARTIES.fo.find(p=>p.id===t.foId);
                 const lsp = PARTIES.lsp.find(p=>p.id===t.lspId);
                 const tot = tripTotals(t);
+                const pays = t.fo.payments || [];
+                const advPaid = pays.some(p=>p.stage==='Advance');
+                const balPaid = pays.some(p=>p.stage==='Balance' && !p.isWallet);
+                const balWallet = pays.some(p=>p.stage==='Balance' && p.isWallet);
+                const advanceAllowed = ['DISPATCHED','IN-TRANSIT','UNLOADED','SETTLED'].includes(t.status);
+                const balanceAllowed = ['UNLOADED','SETTLED'].includes(t.status) && t.podStatus==='Approved';
+                let payHint = '';
+                if (advPaid && balPaid) payHint = 'Settled';
+                else if (advPaid && balWallet) payHint = 'Bal. settled via wallet';
+                else if (advPaid && !balanceAllowed) payHint = 'Awaiting POD / Unload';
+                else if (!advPaid && !advanceAllowed) payHint = 'Advance blocked';
+                else if (advPaid) payHint = 'Balance eligible';
+                else payHint = 'Advance eligible';
                 return (
                   <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50/50">
                     <td className="px-4 py-2">
@@ -582,7 +673,10 @@ function PaymentsPage(){
                     <td className="px-4 py-2">{fo?.name}</td>
                     <td className="px-4 py-2"><div>{lsp?.name}</div><div className="text-[11px] text-slate-400">{t.lspBranch}</div></td>
                     <td className="px-4 py-2"><StatusChip status={t.status}/></td>
-                    <td className="px-4 py-2"><StatusChip status={t.podStatus}/></td>
+                    <td className="px-4 py-2">
+                      <StatusChip status={t.podStatus}/>
+                      <div className="text-[10px] text-slate-500 mt-1">{payHint}</div>
+                    </td>
                     <td className="px-4 py-2 text-right tabular-nums">
                       <div className="font-medium">{INR(tot.foNet)}</div>
                       <div className="text-[11px] text-slate-400">due {INR(tot.foDue)}</div>
@@ -780,15 +874,28 @@ function TripDetail({ id }){
 
   // ---- cancel trip ----
   function cancelTrip(){
-    if (!confirm('Cancel this trip? Freight will be zeroed; existing payments move to wallet.')) return;
+    if (!confirm('Cancel this trip? Freight will be zeroed and only Cancellation Charge will be retained; all deductions will be cleared.')) return;
     updateTrip(t => {
       t.status = 'CANCELLED';
-      t.fo = { ...t.fo, freight:0, charges:[], deductions:[] };
-      t.lsp = { ...t.lsp, freight:0, charges:[], deductions:[] };
+      t.podStatus = 'NA';
+      // FO: freight → 0, keep only Cancellation Charge, deductions → 0
+      t.fo = {
+        ...t.fo,
+        freight: 0,
+        charges: (t.fo.charges||[]).filter(c => c.cid === 'C7' || /Cancellation/i.test(c.name)),
+        deductions: [],
+      };
+      // LSP mirror: same treatment
+      t.lsp = {
+        ...t.lsp,
+        freight: 0,
+        charges: (t.lsp.charges||[]).filter(c => c.cid === 'C7' || /Cancellation/i.test(c.name)),
+        deductions: [],
+      };
       return t;
     });
-    pushAudit({ actor:'you@ft', trip:trip.id, action:'Trip cancelled', details:`Freight zeroed; payments moved to wallets (mock)` });
-    showToast('Trip cancelled and payments moved to wallets');
+    pushAudit({ actor:'you@ft', trip:trip.id, action:'Trip cancelled', details:`Auto-update: Freight → 0; charges reduced to Cancellation only; deductions → 0; payments moved to wallets (mock)` });
+    showToast('Trip cancelled — freight zeroed, only Cancellation Charge retained');
   }
 
   return (
@@ -839,16 +946,6 @@ function TripDetail({ id }){
       {/* LSP Section */}
       <Section id="lsp" title={`LSP — ${lsp?.name} (${trip.lspBranch})`} right={<div className="flex gap-2"><Button size="sm" kind="soft" onClick={()=>openAdd('lsp','Charge')}>+ Charge</Button><Button size="sm" kind="outline" onClick={()=>openAdd('lsp','Deduction')}>+ Deduction</Button></div>}>
         <PartySectionTable side="lsp" trip={trip} totals={tot} fo={fo} onApprove={approve} onPay={(stage)=>openPay('recv',stage)} onEdit={openEdit}/>
-      </Section>
-
-      {/* FT Section */}
-      <Section id="ft" title="Freight Tiger — Earnings & Margin" defaultOpen={false}>
-        <div className="grid grid-cols-3 gap-3 text-sm">
-          <Field label="Dala Charges (Auto)" value={INR(tot.ftCommission)}/>
-          <Field label="Expected Margin" value={INR(tot.ftExpMargin)}/>
-          <Field label="Realized Margin" value={INR(tot.ftRealMargin)}/>
-        </div>
-        <div className="text-xs text-slate-500 mt-2">Dala Charges (commission) derived from rules engine slabs based on LSP freight {INR(trip.lsp.freight)}.</div>
       </Section>
 
       {/* POD */}
@@ -1061,6 +1158,7 @@ function Timeline({ trip }){
 }
 
 function PartySectionTable({ side, trip, totals, fo, onApprove, onPay, onEdit }){
+  const { rules } = useApp();
   const data = trip[side];
   const isFO = side === 'fo';
   const payments = isFO ? data.payments : data.receipts;
@@ -1072,11 +1170,21 @@ function PartySectionTable({ side, trip, totals, fo, onApprove, onPay, onEdit })
 
   const advancePaid = (payments||[]).some(p=>p.stage==='Advance');
   const balancePaid = (payments||[]).some(p=>p.stage==='Balance');
+  const podApproved = trip.podStatus==='Approved';
   const advanceAllowed = ['DISPATCHED','IN-TRANSIT','UNLOADED','SETTLED'].includes(trip.status);
   const balanceAllowed = ['UNLOADED','SETTLED'].includes(trip.status);
 
   const advanceDisabled = advancePaid || !advanceAllowed;
-  const balanceDisabled = balancePaid || !balanceAllowed;
+  const balanceDisabled = balancePaid || !balanceAllowed || (isFO && !podApproved);
+
+  const advanceReason = advancePaid ? 'Already paid'
+                       : !advanceAllowed ? 'Vehicle not yet dispatched'
+                       : '';
+  const balanceReason = balancePaid ? 'Already paid'
+                       : !balanceAllowed ? 'Vehicle not yet unloaded'
+                       : (isFO && !podApproved) ? 'POD not yet approved'
+                       : '';
+  const sysRows = isFO ? systemFODeductions(trip, fo, rules) : [];
 
   return (
     <div>
@@ -1094,13 +1202,47 @@ function PartySectionTable({ side, trip, totals, fo, onApprove, onPay, onEdit })
       <div className="font-semibold text-sm text-slate-700 mt-4 mb-2">Deductions</div>
       <ItemTable items={data.deductions} side={side} kind="deductions" onApprove={onApprove} onEdit={onEdit}/>
 
+      {isFO && sysRows.length>0 && (
+        <div className="mt-4">
+          <div className="font-semibold text-sm text-slate-700 mb-2 flex items-center gap-2">
+            System-applied Deductions
+            <span className="chip bg-slate-100 text-slate-600">Auto • read-only</span>
+          </div>
+          <table className="min-w-full text-sm">
+            <thead className="text-slate-500 text-xs"><tr className="text-left">
+              <th className="py-2">Component</th><th>Amount</th><th>Status</th><th>Added by</th><th>Logic</th>
+            </tr></thead>
+            <tbody>
+              {sysRows.map((s,i)=>(
+                <tr key={i} className="border-t border-slate-100 bg-slate-50/40">
+                  <td className="py-2 font-medium">{s.name}</td>
+                  <td className="tabular-nums">{INR(s.amt)}</td>
+                  <td><span className="chip bg-emerald-50 text-emerald-700 border border-emerald-200">⚡ Auto-approved</span></td>
+                  <td className="text-xs text-slate-600">system<div className="text-[10px] text-slate-400">{s.at}</div></td>
+                  <td className="text-xs text-slate-500 max-w-md">{s.logic}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="text-[11px] text-slate-400 mt-2">These rows are computed from the Rules Engine in real time and are not summed into the manual deductions total above. They reflect what the system would apply when a payout is processed.</div>
+        </div>
+      )}
+
       {/* Payments */}
       <div className="flex items-center justify-between mt-5 mb-2">
         <div className="font-semibold text-sm text-slate-700">{isFO?'Payments':'Receipts'}</div>
-        <div className="flex gap-2">
-          <Button size="sm" kind="soft" disabled={advanceDisabled} className={advanceDisabled?'opacity-50 cursor-not-allowed':''} onClick={()=>!advanceDisabled && onPay('Advance')} title={advancePaid?'Advance already paid':(!advanceAllowed?'Trip must be Dispatched or In-Transit':'')}>+ Advance{advancePaid&&' ✓'}</Button>
-          <Button size="sm" kind="soft" onClick={()=>onPay('Interim')}>+ Interim</Button>
-          <Button size="sm" kind="primary" disabled={balanceDisabled} className={balanceDisabled?'opacity-50 cursor-not-allowed':''} onClick={()=>!balanceDisabled && onPay('Balance')} title={balancePaid?'Balance already paid':(!balanceAllowed?'Vehicle must be Unloaded':'')}>+ Balance{balancePaid&&' ✓'}</Button>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex gap-2">
+            <Button size="sm" kind="soft" disabled={advanceDisabled} className={advanceDisabled?'opacity-50 cursor-not-allowed':''} onClick={()=>!advanceDisabled && onPay('Advance')} title={advanceReason}>+ Advance{advancePaid&&' ✓'}</Button>
+            <Button size="sm" kind="soft" onClick={()=>onPay('Interim')}>+ Interim</Button>
+            <Button size="sm" kind="primary" disabled={balanceDisabled} className={balanceDisabled?'opacity-50 cursor-not-allowed':''} onClick={()=>!balanceDisabled && onPay('Balance')} title={balanceReason}>+ Balance{balancePaid&&' ✓'}</Button>
+          </div>
+          {(advanceReason || balanceReason) && (
+            <div className="text-[11px] text-rose-600 flex gap-3">
+              {advanceReason && <span>Advance disabled: {advanceReason}</span>}
+              {balanceReason && <span>Balance disabled: {balanceReason}</span>}
+            </div>
+          )}
         </div>
       </div>
       <table className="min-w-full text-sm">
@@ -1129,8 +1271,20 @@ function PartySectionTable({ side, trip, totals, fo, onApprove, onPay, onEdit })
 }
 
 function ItemTable({ items, side, kind, onApprove, onEdit }){
+  const { components } = useApp();
   const [hist, setHist] = useState(null); // index whose history popover is open
   if (!items?.length) return <Empty msg="None yet"/>;
+  function isAutoApproved(c){
+    if (c.status !== 'Approved') return false;
+    const comp = components.find(x=>x.id===c.cid);
+    if (!comp) return false;
+    if (comp.approvalRule === 'never') return true;
+    if (comp.approvalRule.startsWith('>')) {
+      const thr = Number(comp.approvalRule.slice(1));
+      return c.amt <= thr;
+    }
+    return false;
+  }
   return (
     <table className="min-w-full text-sm">
       <thead className="text-slate-500 text-xs"><tr className="text-left">
@@ -1162,7 +1316,11 @@ function ItemTable({ items, side, kind, onApprove, onEdit }){
               </div>
             </td>
             <td className="tabular-nums">{INR(c.amt)}</td>
-            <td><StatusChip status={c.status}/></td>
+            <td>
+              {isAutoApproved(c)
+                ? <span className="chip bg-emerald-50 text-emerald-700 border border-emerald-200" title="Below approval threshold — auto-approved by system">⚡ Auto-approved</span>
+                : <StatusChip status={c.status}/>}
+            </td>
             <td className="text-xs">
               <div className="text-slate-700">{c.addedBy||'—'}</div>
               <div className="text-[10px] text-slate-400">{c.at}</div>
@@ -1403,14 +1561,36 @@ function FOListPage(){
               <th className="px-4 py-2 font-medium">City</th>
               <th className="px-4 py-2 font-medium">TDS</th>
               <th className="px-4 py-2 font-medium text-right">Trips</th>
+              <th className="px-4 py-2 font-medium text-right">Pending Payable</th>
+              <th className="px-4 py-2 font-medium text-right">Eligible Payable</th>
               <th className="px-4 py-2 font-medium text-right">FO Owes FT</th>
+              <th className="px-4 py-2 font-medium">Payment Status</th>
               <th className="px-4 py-2"></th>
             </tr>
           </thead>
           <tbody>
             {PARTIES.fo.map(fo => {
               const w = wallets[fo.id]||{ftOwes:0,partyOwes:0};
-              const count = trips.filter(t=>t.foId===fo.id).length;
+              const foTrips = trips.filter(t=>t.foId===fo.id);
+              const count = foTrips.length;
+              let pendingPayable = 0, eligiblePayable = 0, blockedCount = 0;
+              foTrips.forEach(t => {
+                const tot = tripTotals(t);
+                pendingPayable += Math.max(0, tot.foDue);
+                const pays = t.fo.payments||[];
+                const advPaid = pays.some(p=>p.stage==='Advance');
+                const balPaid = pays.some(p=>p.stage==='Balance');
+                const advAllowed = ['DISPATCHED','IN-TRANSIT','UNLOADED','SETTLED'].includes(t.status);
+                const balAllowed = ['UNLOADED','SETTLED'].includes(t.status) && t.podStatus==='Approved';
+                if (!advPaid && advAllowed) eligiblePayable += Math.round(tot.foNet * 0.85);
+                if (!balPaid && balAllowed) eligiblePayable += Math.max(0, tot.foDue);
+                if (tot.foDue > 0 && !((!advPaid && advAllowed) || (!balPaid && balAllowed))) blockedCount++;
+              });
+              const statusChip = blockedCount > 0
+                ? <span className="chip bg-amber-100 text-amber-700" title="One or more trips have payment disabled (Already paid / POD pending / Not unloaded)">{blockedCount} blocked</span>
+                : eligiblePayable > 0
+                  ? <span className="chip bg-emerald-100 text-emerald-700">Ready to pay</span>
+                  : <span className="chip bg-slate-100 text-slate-600">All clear</span>;
               return (
                 <tr key={fo.id} className="border-t border-slate-100 hover:bg-slate-50/50">
                   <td className="px-4 py-2"><button onClick={()=>setRoute({name:'fo-detail', id:fo.id})} className="font-semibold text-brand-700 hover:underline">{fo.name}</button><div className="text-[11px] text-slate-400">{fo.id}</div></td>
@@ -1418,7 +1598,10 @@ function FOListPage(){
                   <td className="px-4 py-2">{fo.city}</td>
                   <td className="px-4 py-2">{fo.hasExemption?'Exempt':`${fo.tdsRate}%`}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{count}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{INR(pendingPayable)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-indigo-700">{INR(eligiblePayable)}</td>
                   <td className="px-4 py-2 text-right tabular-nums text-rose-700">{INR(w.partyOwes)}</td>
+                  <td className="px-4 py-2">{statusChip}</td>
                   <td className="px-4 py-2 text-right"><Button size="sm" kind="ghost" onClick={()=>setRoute({name:'fo-detail', id:fo.id})}>Open →</Button></td>
                 </tr>
               );
@@ -1536,6 +1719,40 @@ function PartyLedger({ kind, id }){
         </div>
         <div className="text-sm text-slate-500 mt-1">PAN {party.pan} {party.gst&&`• GST ${party.gst}`}{kind==='fo'&&` • TDS ${party.hasExemption?'Exempt':party.tdsRate+'%'}`}{kind==='lsp'&&` • Credit ${party.creditDays}d`}</div>
       </div>
+
+      {/* ── LSP exposure strip (LSP only) ── */}
+      {kind==='lsp' && (() => {
+        const m = lspMetrics(id, trips);
+        const limit = party.creditLimit||0;
+        const pct = limit ? Math.round((m.currentExposure/limit)*100) : 0;
+        const overLimit = m.currentExposure > limit;
+        return (
+          <div className="grid grid-cols-4 gap-3">
+            <SummaryCard label="Configured Exposure" value={INR(limit)} sub={`Credit ${party.creditDays} days`} tone="brand"/>
+            <SummaryCard label="Current Exposure" value={INR(m.currentExposure)} sub={`${pct}% of limit ${overLimit?'• ⚠️ over limit':''}`} tone={overLimit?'rose':'slate'}/>
+            <SummaryCard label="Awaiting POD Submission" value={INR(m.awaitingPOD)} sub="Pending POD submission/approval" tone="rose"/>
+            <SummaryCard label="Eligible Receivable" value={INR(m.eligibleReceivable)} sub="Advance (in-transit) + Balance (POD approved)" tone="emerald"/>
+          </div>
+        );
+      })()}
+
+      {/* ── Unsettled receipts (LSP only) ── */}
+      {kind==='lsp' && (() => {
+        const m = lspMetrics(id, trips);
+        if (m.unsettledReceipts<=0) return null;
+        return (
+          <Card>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold text-amber-700 uppercase">Unsettled LSP Payments</div>
+                <div className="text-xl font-bold text-slate-900 tabular-nums mt-1">{INR(m.unsettledReceipts)}</div>
+                <div className="text-xs text-slate-500 mt-1">LSP has paid FT but the receipt isn't yet allocated to a specific trip. Allocate to clear current exposure.</div>
+              </div>
+              <Button>Allocate to Trips →</Button>
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* ── Headline row: 3 KPIs ── */}
       <div className="grid grid-cols-3 gap-3">
@@ -1697,41 +1914,98 @@ function ClickableStat({ label, value, sub, tone='brand', active, onClick, icon 
   );
 }
 
+// Compute LSP exposure & receivable splits for a given LSP id
+function lspMetrics(lspId, trips){
+  const lspTrips = trips.filter(t => t.lspId===lspId);
+  let currentExposure=0, awaitingPOD=0, eligibleReceivable=0, totalReceivable=0;
+  lspTrips.forEach(t => {
+    const tot = tripTotals(t);
+    totalReceivable += tot.lspNet;
+    const due = Math.max(0, tot.lspDue);
+    currentExposure += due;
+    const recvs = t.lsp.receipts || [];
+    const advRecv = recvs.some(r=>r.stage==='Advance');
+    const balRecv = recvs.some(r=>r.stage==='Balance');
+    // Advance eligible: LSP must pay once vehicle is in-transit (advance paid to FO)
+    const advAllowed = ['IN-TRANSIT','UNLOADED','SETTLED'].includes(t.status);
+    if (!advRecv && advAllowed) eligibleReceivable += Math.round(tot.lspNet * 0.85);
+    // Balance eligible: POD submitted (audit clean / approved) on LSP side
+    const balAllowed = ['UNLOADED','SETTLED'].includes(t.status) && t.podStatus==='Approved';
+    if (!balRecv && balAllowed) eligibleReceivable += Math.max(0, tot.lspDue);
+    // Awaiting POD = trips where vehicle moved but POD not submitted/approved
+    if (due > 0 && !balAllowed) awaitingPOD += due;
+  });
+  // Mock: unsettled LSP receipts = receipts received but a portion not yet allocated to a trip
+  // For demo, take 15% of received total as "unsettled".
+  const totalReceived = lspTrips.reduce((s,t)=> s + (t.lsp.receipts||[]).reduce((a,r)=>a+r.amt,0), 0);
+  const unsettledReceipts = Math.round(totalReceived * 0.15);
+  return { currentExposure, awaitingPOD, eligibleReceivable, totalReceivable, unsettledReceipts, tripCount: lspTrips.length };
+}
+
 function LSPListPage(){
   const { trips, wallets, setRoute } = useApp();
+  const totalUnsettled = PARTIES.lsp.reduce((s,l)=> s + lspMetrics(l.id, trips).unsettledReceipts, 0);
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div><h1 className="text-xl font-semibold">LSPs</h1><p className="text-sm text-slate-500">PAN-level customer with branch sub-accounts</p></div>
         <Button kind="outline">Download LSP Master</Button>
       </div>
+
+      {/* Marketplace-level Unsettled LSP Payment block */}
+      <Card>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-xs font-semibold text-amber-700 uppercase">Unsettled LSP Payments</div>
+            <div className="text-2xl font-bold text-slate-900 tabular-nums mt-1">{INR(totalUnsettled)}</div>
+            <div className="text-xs text-slate-500 mt-1">LSP has paid FT but receipts are not yet allocated against a trip. Allocate from Bulk Approval Dashboard.</div>
+          </div>
+          <Button kind="primary">Allocate Receipts →</Button>
+        </div>
+      </Card>
+
       <Card padded={false}>
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-slate-600">
             <tr className="text-left">
+              <th className="px-4 py-2 font-medium">Unsettled Receipt</th>
               <th className="px-4 py-2 font-medium">LSP</th>
               <th className="px-4 py-2 font-medium">PAN</th>
               <th className="px-4 py-2 font-medium">Branches</th>
               <th className="px-4 py-2 font-medium">Credit Days</th>
               <th className="px-4 py-2 font-medium text-right">Trips</th>
-              <th className="px-4 py-2 font-medium text-right">FT Owes</th>
-              <th className="px-4 py-2 font-medium text-right">LSP Owes</th>
+              <th className="px-4 py-2 font-medium text-right">Configured Exposure</th>
+              <th className="px-4 py-2 font-medium text-right">Current Exposure</th>
+              <th className="px-4 py-2 font-medium text-right">Awaiting POD</th>
+              <th className="px-4 py-2 font-medium text-right">Eligible Receivable</th>
               <th className="px-4 py-2"></th>
             </tr>
           </thead>
           <tbody>
             {PARTIES.lsp.map(l => {
               const w = wallets[l.id]||{ftOwes:0,partyOwes:0};
-              const count = trips.filter(t=>t.lspId===l.id).length;
+              const m = lspMetrics(l.id, trips);
+              const exposurePct = l.creditLimit ? Math.round((m.currentExposure / l.creditLimit) * 100) : 0;
+              const overLimit = m.currentExposure > l.creditLimit;
               return (
                 <tr key={l.id} className="border-t border-slate-100 hover:bg-slate-50/50">
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {m.unsettledReceipts>0
+                      ? <span className="chip bg-amber-100 text-amber-700">{INR(m.unsettledReceipts)}</span>
+                      : <span className="text-slate-400 text-xs">—</span>}
+                  </td>
                   <td className="px-4 py-2"><button onClick={()=>setRoute({name:'lsp-detail',id:l.id})} className="font-semibold text-brand-700 hover:underline">{l.name}</button><div className="text-[11px] text-slate-400">{l.id}</div></td>
                   <td className="px-4 py-2 text-xs">{l.pan}</td>
                   <td className="px-4 py-2 text-xs">{l.branches.map(b=>b.code).join(', ')}</td>
                   <td className="px-4 py-2">{l.creditDays}d</td>
-                  <td className="px-4 py-2 text-right">{count}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-emerald-700">{INR(w.ftOwes)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-rose-700">{INR(w.partyOwes)}</td>
+                  <td className="px-4 py-2 text-right">{m.tripCount}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{INR(l.creditLimit||0)}</td>
+                  <td className={cls('px-4 py-2 text-right tabular-nums', overLimit?'text-rose-700 font-semibold':'')}>
+                    {INR(m.currentExposure)}
+                    <div className="text-[10px] text-slate-400">{exposurePct}% of limit</div>
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums text-amber-700">{INR(m.awaitingPOD)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-indigo-700">{INR(m.eligibleReceivable)}</td>
                   <td className="px-4 py-2 text-right"><Button size="sm" kind="ghost" onClick={()=>setRoute({name:'lsp-detail', id:l.id})}>Open →</Button></td>
                 </tr>
               );
